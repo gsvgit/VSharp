@@ -6,7 +6,9 @@ open System.Collections.Generic
 
 open System.Reflection.Emit
 open CFPQ_GLL
+open CFPQ_GLL.GLL
 open CFPQ_GLL.InputGraph
+open CFPQ_GLL.RSM
 open FSharpx.Collections
 open Microsoft.FSharp.Collections
 open VSharp
