@@ -117,6 +117,9 @@ type public SILIStatistics() =
        Dict.getValueOrUpdate totalVisited loc (fun () -> 0u) > 0u
 
     member x.TrackStepForward (s : cilState) =
+        // TODO gsv add query here.
+        //unansweredPobs.[0].loc
+        //cilState.currentLocation
         let startLoc = ip2codeLocation s.startingIP
         let currentLoc = ip2codeLocation (currentIp s)
         let visited = history s
