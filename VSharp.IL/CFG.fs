@@ -5,8 +5,10 @@ open System.Collections.Generic
 
 open CFPQ_GLL
 open CFPQ_GLL.GLL
+open CFPQ_GLL.GSS
 open CFPQ_GLL.InputGraph
 open CFPQ_GLL.RSM
+open CFPQ_GLL.SPPF
 open FSharpx.Collections
 open Microsoft.FSharp.Collections
 open VSharp
