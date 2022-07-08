@@ -137,9 +137,13 @@ type public SILI(options : SiliOptions) =
             | _ -> ()
             let loc' = s.currentLoc
             CFG.applicationGraph.MoveState loc loc'
+            let locationsForQuery = ResizeArray<_>([|loc'|])
             newStates |> Seq.iter (fun newState ->
                 let loc = currentLoc newState
+                locationsForQuery.Add loc
                 CFG.applicationGraph.AddState loc)
+            let distances = CFG.applicationGraph.GetShortestDistancesToAllGoalsFromStates(locationsForQuery.ToArray())
+            Logger.trace $"Distances: %A{distances}"
             searcher.UpdateStates s newStates
 
     member private x.Backward p' s' EP =
