@@ -143,7 +143,7 @@ type public SILI(options : SiliOptions) =
                 locationsForQuery.Add loc
                 CFG.applicationGraph.AddState loc)
             let distances = CFG.applicationGraph.GetShortestDistancesToAllGoalsFromStates(locationsForQuery.ToArray())
-            Logger.trace $"Distances: %A{distances}"
+            Logger.trace $"Reachable pairs: %A{distances.Count}"
             searcher.UpdateStates s newStates
 
     member private x.Backward p' s' EP =
