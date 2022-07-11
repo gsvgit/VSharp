@@ -225,7 +225,7 @@ type CfgInfo (cfg:CfgTemporaryData) =
         resolveBasicBlock offset
 
 type private ApplicationGraphMessage =
-    | AddGoal of codeLocation
+    | AddGoals of array<codeLocation>
     | RemoveGoal of codeLocation
     | AddState of codeLocation
     | MoveState of positionForm:codeLocation * positionTo: codeLocation
@@ -243,7 +243,6 @@ type ApplicationGraph() as this =
     let cfgToFirstVertexIdMapping = Dictionary<MethodBase,int<inputGraphVertex>>()
     let statesToInnerGraphVerticesMap = Dictionary<codeLocation, int<inputGraphVertex>>()
     let innerGraphVerticesToStatesMap = Dictionary<int<inputGraphVertex>, codeLocation>()
-    let goalsToInnerGraphVerticesMap = Dictionary<codeLocation, int<inputGraphVertex>>()
     let innerGraphVerticesToGoalsMap = Dictionary<int<inputGraphVertex>, codeLocation>()
     let goalsInInnerGraph = ResizeArray<_>()
     let cfgs = Dictionary<MethodBase, CfgInfo>()
@@ -332,19 +331,23 @@ type ApplicationGraph() as this =
     let getVertex (pos:codeLocation) =
         cfgToFirstVertexIdMapping.[pos.method] + cfgs.[pos.method].ResolveBasicBlock pos.offset * 1<inputGraphVertex>
         
-    let addGoal (pos:codeLocation) = 
+    let addGoals (positions:array<codeLocation>) = 
         //Logger.trace $"Add goal: %A{pos.method.Name}, %A{pos.offset}"
-        let vertexInInnerGraph = getVertex pos
-        goalsToInnerGraphVerticesMap.Add (pos, vertexInInnerGraph)
-        innerGraphVerticesToGoalsMap.Add (vertexInInnerGraph, pos)
-        goalsInInnerGraph.Add vertexInInnerGraph
+        for pos in positions do
+            let vertexInInnerGraph = getVertex pos        
+            innerGraphVerticesToGoalsMap.Add (vertexInInnerGraph, pos)
+            goalsInInnerGraph.Add vertexInInnerGraph
+        //let positionsInAttachedCfgs =
+        //    positions |> Array.filter (fun pos -> pos.method)
+        //if positionsInAttachedCfgs.Length > 0
+        //then
+        //    updateDistances()
         
     let removeGoal (pos:codeLocation) =
         //Logger.trace $"Remove goal: %A{pos.method.Name}, %A{pos.offset}"
         let vertexInInnerGraph = getVertex pos
-        goalsToInnerGraphVerticesMap.Remove pos |> ignore
         innerGraphVerticesToGoalsMap.Remove vertexInInnerGraph |> ignore
-        goalsInInnerGraph.Remove vertexInInnerGraph
+        goalsInInnerGraph.Remove vertexInInnerGraph |> ignore
         
     let addCallEdge (callSource:codeLocation) (callTarget:codeLocation) =
         //Logger.trace $"Add call edge from %A{callSource.method}, %i{callSource.offset} to %A{callTarget.method}."       
@@ -419,7 +422,7 @@ type ApplicationGraph() as this =
             
         | _ -> failwith "Impossible!"
         
-    let getShortestDistancesToGoal (states:array<codeLocation>) =
+    let getShortestDistancesToGoals (states:array<codeLocation>) =
         let result = ResizeArray<_>()
         let statesInInnerGraph =
             states |> Array.choose (fun state ->
@@ -435,20 +438,7 @@ type ApplicationGraph() as this =
                     addState state
                     let state = cfgToFirstVertexIdMapping.[state.method] + state.offset * 1<inputGraphVertex>
                     Some state)
-        //Logger.trace $"Get shortest distances for %A{states}."
-        //let query = buildQuery()
-        
-        
-        (*let statesInInnerGraph =            
-            states
-            |> Array.map (fun state ->
-                addState state
-                cfgToFirstVertexIdMapping.[state.method] + state.offset * 1<inputGraphVertex>)            
-            
-        let goalsInInnerGraph =
-            goalsToInnerGraphVerticesMap
-            |> Seq.map (fun kvp -> kvp.Value)
-            *)
+
         if statesInInnerGraph.Length > 0
         then
             let res,newGSS = evalFromState reachableVertices gss matchedRanges this statesInInnerGraph query Mode.AllPaths
@@ -507,7 +497,7 @@ type ApplicationGraph() as this =
                         tryGetCfgInfo _to.method |> ignore                       
                         addCallEdge _from _to
                         //toDot "cfg.dot"
-                    | AddGoal pos -> addGoal pos
+                    | AddGoals positions -> addGoals positions
                     | RemoveGoal pos -> removeGoal pos
                     | AddState pos -> addState pos
                     | MoveState (_from,_to) ->
@@ -519,7 +509,7 @@ type ApplicationGraph() as this =
                         //    {state with offset = cfg.ResolveBasicBlock state.offset})
                         //|> ignore
                         //replyChannel.Reply(ResizeArray<_>())
-                        replyChannel.Reply (getShortestDistancesToGoal states)
+                        replyChannel.Reply (getShortestDistancesToGoals states)
                     | GetReachableGoals (replyChannel, states) -> replyChannel.Reply (getReachableGoals states)
                 with
                 | e ->
@@ -550,12 +540,12 @@ type ApplicationGraph() as this =
         messagesProcessor.Post <| AddState location
         
     member this.MoveState (fromLocation : codeLocation) (toLocation : codeLocation) =
-        //Add query here        
         messagesProcessor.Post <| MoveState (fromLocation, toLocation)
 
     member x.AddGoal (location:codeLocation) =
-        messagesProcessor.Post <| AddGoal location    
-
+        messagesProcessor.Post <| AddGoals [|location|]    
+    member x.AddGoals (locations:array<codeLocation>) =
+        messagesProcessor.Post <| AddGoals locations
     member x.RemoveGoal (location:codeLocation) =
         messagesProcessor.Post <| RemoveGoal location
     
