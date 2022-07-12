@@ -13,6 +13,10 @@ open FSharpx.Collections
 open VSharp
 open VSharp.Core
 
+type IGraphTrackableState =
+    abstract member CodeLocation: codeLocation
+    abstract member CallStack: list<codeLocation*codeLocation>
+
 [<Struct>]
 type CallInfo =
     val CallFrom: offset
@@ -227,25 +231,41 @@ type CfgInfo (cfg:CfgTemporaryData) =
 type private ApplicationGraphMessage =
     | AddGoals of array<codeLocation>
     | RemoveGoal of codeLocation
-    | AddState of codeLocation
-    | MoveState of positionForm:codeLocation * positionTo: codeLocation
+    | AddState of IGraphTrackableState
+    | MoveState of positionForm:codeLocation * positionTo: IGraphTrackableState
     | AddCFG of Option<AsyncReplyChannel<CfgInfo>> *  MethodBase
     | AddCallEdge of callForm:codeLocation * callTo: codeLocation
     | GetShortestDistancesToGoals
         of AsyncReplyChannel<ResizeArray<codeLocation * codeLocation * int>> * array<codeLocation>
     | GetReachableGoals
         of AsyncReplyChannel<Dictionary<codeLocation,HashSet<codeLocation>>> * array<codeLocation>
-    
+
+type private RangesComparer() =
+    interface IComparer<int<inputGraphVertex>*int<inputGraphVertex>> with
+        member this.Compare ((x1,x2),(y1,y2)) =
+            if (x1 <= y1 && x2 >= y2) || (y1 <= x1 && y2 >= x2)
+            then 0
+            elif x2 < y1
+            then -1
+            elif y2 < x1
+            then 1
+            else failwithf $"You can rty try to compare incomparable ranges: (%A{x1},%A{x2}) and (%A{y1},%A{y2})"
+      
 type ApplicationGraph() as this =        
     let mutable firstFreeVertexId = 0<inputGraphVertex>        
     let terminalForCFGEdge = 0<terminalSymbol>
     let mutable firstFreeCallTerminalId = 1<terminalSymbol>
     let cfgToFirstVertexIdMapping = Dictionary<MethodBase,int<inputGraphVertex>>()
-    let statesToInnerGraphVerticesMap = Dictionary<codeLocation, int<inputGraphVertex>>()
-    let innerGraphVerticesToStatesMap = Dictionary<int<inputGraphVertex>, codeLocation>()
-    let innerGraphVerticesToGoalsMap = Dictionary<int<inputGraphVertex>, codeLocation>()
+    //let statesToInnerGraphVerticesMap = Dictionary<codeLocation, int<inputGraphVertex>>()
+    //let innerGraphVerticesToStatesMap = Dictionary<int<inputGraphVertex>, codeLocation>()
+    //let innerGraphVerticesToGoalsMap = Dictionary<int<inputGraphVertex>, codeLocation>()
     let goalsInInnerGraph = ResizeArray<_>()
+    let allStates = HashSet<IGraphTrackableState>()
     let cfgs = Dictionary<MethodBase, CfgInfo>()
+    let attachedCfgs = HashSet<_>()
+    let innerGraphVerticesToCodeLocationMap =        
+        let d = SortedDictionary<_,_>(comparer = RangesComparer())
+        d
     let vertices = Dictionary<int<inputGraphVertex>, ResizeArray<InputGraphEdge>>()
    
     let toDot filePath =        
@@ -301,7 +321,7 @@ type ApplicationGraph() as this =
         reachableVertices.Clear()
         gss <- GSS()
         computedDistances.Clear()
-        knownDistances.Clear()
+        //knownDistances.Clear()
         matchedRanges <- MatchedRanges(query)
     
     let buildCFG (methodBase:MethodBase) =
@@ -324,30 +344,79 @@ type ApplicationGraph() as this =
             else outgoingEdges.AddRange edges 
             
         cfgToFirstVertexIdMapping.Add(methodBase, firstFreeVertexId)
-        firstFreeVertexId <- firstFreeVertexId + cfg.ILBytes.Length * 1<inputGraphVertex>
+        let nextFreeVertexIndex = firstFreeVertexId + cfg.ILBytes.Length * 1<inputGraphVertex>
+        innerGraphVerticesToCodeLocationMap.Add((firstFreeVertexId, nextFreeVertexIndex - 1<inputGraphVertex>),(firstFreeVertexId, methodBase))
+        firstFreeVertexId <- nextFreeVertexIndex
         
         cfg
         
     let getVertex (pos:codeLocation) =
         cfgToFirstVertexIdMapping.[pos.method] + cfgs.[pos.method].ResolveBasicBlock pos.offset * 1<inputGraphVertex>
         
-    let addGoals (positions:array<codeLocation>) = 
-        //Logger.trace $"Add goal: %A{pos.method.Name}, %A{pos.offset}"
+    let getCodeLocation (vertex:int<inputGraphVertex>) =
+        let firstVertexId, method = innerGraphVerticesToCodeLocationMap.[(vertex,vertex)]
+        {method = method; offset = int (vertex - firstVertexId)}
+    
+    let updateDistances (states: seq<IGraphTrackableState>) goals =
+        let startVertices = states |> Seq.map (fun state -> getVertex state.CodeLocation)
+        let distances, _computedDistances = matchedRanges.GetShortestDistances(computedDistances, startVertices, goals)
+        states |> Seq.iter (fun state ->            
+            let exists, distances = knownDistances.TryGetValue state.CodeLocation
+            if exists
+            then distances.Clear()
+            else knownDistances.Add(state.CodeLocation, ResizeArray<_>()))
+        computedDistances <- _computedDistances
+        distances
+        |> ResizeArray.iter (fun (_from,_to,distance) ->
+            match distance with
+            | Unreachable -> ()
+            | Reachable distance ->
+                let startCodeLocation = getCodeLocation _from                
+                knownDistances.[startCodeLocation].Add(
+                    (startCodeLocation,
+                    getCodeLocation _to,
+                    distance))                
+            )
+        
+    let updateReachabilityInfo () =
+        //resetCfpqState()
+        let startVertices =
+            allStates
+            |> Seq.map (fun state -> getVertex state.CodeLocation)
+            
+        let res = GLL.eval this (HashSet<_> startVertices) query Mode.AllPaths
+        //gss <- newGSS
+        match res with
+        | QueryResult.ReachabilityFacts _ ->
+            failwith "Impossible!"
+        | QueryResult.MatchedRanges ranges ->
+            matchedRanges <- ranges 
+            
+    let removeGoalFromReachable (removedGoal:codeLocation) =
+        knownDistances
+        |> Seq.iter (fun kvp ->
+            let removedCount = kvp.Value.RemoveAll(fun (_, _to, _) -> _to = removedGoal)
+            assert (removedCount > 0)            
+            )
+        
+    let addGoals (positions:array<codeLocation>) =
+        Logger.trace $"Add goals. Number of goals: %i{positions.Length}"
+        let newGoals = ResizeArray<_>()
         for pos in positions do
             let vertexInInnerGraph = getVertex pos        
-            innerGraphVerticesToGoalsMap.Add (vertexInInnerGraph, pos)
+            //innerGraphVerticesToGoalsMap.Add (vertexInInnerGraph, pos)
             goalsInInnerGraph.Add vertexInInnerGraph
-        //let positionsInAttachedCfgs =
-        //    positions |> Array.filter (fun pos -> pos.method)
-        //if positionsInAttachedCfgs.Length > 0
-        //then
-        //    updateDistances()
+            newGoals.Add vertexInInnerGraph
+        let positionsInAttachedCfgs =
+            positions |> Array.filter (fun pos -> attachedCfgs.Contains pos.method)
+        if positionsInAttachedCfgs.Length > 0
+        then updateDistances allStates newGoals
         
     let removeGoal (pos:codeLocation) =
-        //Logger.trace $"Remove goal: %A{pos.method.Name}, %A{pos.offset}"
         let vertexInInnerGraph = getVertex pos
-        innerGraphVerticesToGoalsMap.Remove vertexInInnerGraph |> ignore
+        //innerGraphVerticesToGoalsMap.Remove vertexInInnerGraph |> ignore
         goalsInInnerGraph.Remove vertexInInnerGraph |> ignore
+        removeGoalFromReachable pos
         
     let addCallEdge (callSource:codeLocation) (callTarget:codeLocation) =
         //Logger.trace $"Add call edge from %A{callSource.method}, %i{callSource.offset} to %A{callTarget.method}."       
@@ -361,7 +430,11 @@ type ApplicationGraph() as this =
             else
                 let exists, location = callerMethodCfgInfo.Calls.TryGetValue callSource.offset
                 if exists
-                then getVertex {callSource with offset = location.ReturnTo}
+                then
+                    let returnTo = getVertex {callSource with offset = location.ReturnTo}
+                    let removed = vertices.[callFrom].Remove(InputGraphEdge(terminalForCFGEdge,returnTo))
+                    assert removed
+                    returnTo
                 else getVertex {callSource with offset = callerMethodCfgInfo.Sinks.[0]}            
 
         if not (vertices.ContainsKey callFrom && vertices.[callFrom].Exists (fun edg -> edg.TargetVertex = callTo))
@@ -378,31 +451,30 @@ type ApplicationGraph() as this =
                 |> vertices.[returnFrom].Add
                 
             firstFreeCallTerminalId <- firstFreeCallTerminalId + 2<terminalSymbol>
+            let added = attachedCfgs.Add callTarget.method
+            assert added
             resetCfpqState()
+            updateReachabilityInfo()
+            updateDistances allStates goalsInInnerGraph
         
-    let moveState (initialPosition: codeLocation) (finalPosition: codeLocation) =
+    let moveState (initialPosition: codeLocation) (movedState: IGraphTrackableState) =
         let initialVertexInInnerGraph = getVertex initialPosition            
-        let finalVertexInnerGraph = getVertex finalPosition 
+        let finalVertexInnerGraph = getVertex movedState.CodeLocation 
         if initialVertexInInnerGraph <> finalVertexInnerGraph
         then
-            statesToInnerGraphVerticesMap.Remove initialPosition |> ignore
-            innerGraphVerticesToStatesMap.Remove initialVertexInInnerGraph |> ignore
-            if not <| statesToInnerGraphVerticesMap.ContainsKey finalPosition
-            then statesToInnerGraphVerticesMap.Add(finalPosition, finalVertexInnerGraph)
-            if not <| innerGraphVerticesToStatesMap.ContainsKey finalVertexInnerGraph
-            then innerGraphVerticesToStatesMap.Add(finalVertexInnerGraph,finalPosition)
+            updateDistances [movedState] goalsInInnerGraph
+            //statesToInnerGraphVerticesMap.Remove initialPosition |> ignore
+            //innerGraphVerticesToStatesMap.Remove initialVertexInInnerGraph |> ignore
+            //if not <| statesToInnerGraphVerticesMap.ContainsKey finalPosition
+            //then statesToInnerGraphVerticesMap.Add(finalPosition, finalVertexInnerGraph)
+            //if not <| innerGraphVerticesToStatesMap.ContainsKey finalVertexInnerGraph
+            //then innerGraphVerticesToStatesMap.Add(finalVertexInnerGraph,finalPosition)
             
-    let addState (pos:codeLocation) =
-        //Logger.trace $"Add state: %A{pos.method.Name}, %A{pos.offset}"
-        let vertexInInnerGraph = getVertex pos
-        if not <| statesToInnerGraphVerticesMap.ContainsKey pos
-        then statesToInnerGraphVerticesMap.Add(pos, vertexInInnerGraph)
-        if not <| innerGraphVerticesToStatesMap.ContainsKey vertexInInnerGraph
-        then innerGraphVerticesToStatesMap.Add(vertexInInnerGraph, pos)
-        else innerGraphVerticesToStatesMap.[vertexInInnerGraph] <- pos
+    let addState (state:IGraphTrackableState) =
+        allStates.Add state |> ignore
         
-    let getReachableGoals (states:array<codeLocation>) =
-        Logger.trace $"Get reachable goals for %A{states}."
+    let getReachableGoals (states:array<codeLocation>) = Dictionary<_,_>()
+        (*Logger.trace $"Get reachable goals for %A{states}."
         let query = buildQuery()
         let statesInInnerGraph =
             states
@@ -421,52 +493,15 @@ type ApplicationGraph() as this =
             res
             
         | _ -> failwith "Impossible!"
-        
+        *)
     let getShortestDistancesToGoals (states:array<codeLocation>) =
-        let result = ResizeArray<_>()
-        let statesInInnerGraph =
-            states |> Array.choose (fun state ->
-                let cfg = cfgs.[state.method]                
-                let state = {state with offset = cfg.ResolveBasicBlock state.offset}
-                let exists, known = knownDistances.TryGetValue state
-                if exists
-                then
-                    result.AddRange known
-                    None
-                else
-                    knownDistances.Add(state, ResizeArray<_>())
-                    addState state
-                    let state = cfgToFirstVertexIdMapping.[state.method] + state.offset * 1<inputGraphVertex>
-                    Some state)
-
-        if statesInInnerGraph.Length > 0
-        then
-            let res,newGSS = evalFromState reachableVertices gss matchedRanges this statesInInnerGraph query Mode.AllPaths
-            gss <- newGSS
-            match res with
-            | QueryResult.ReachabilityFacts _ ->
-                failwith "Impossible!"
-            | QueryResult.MatchedRanges ranges ->
-                matchedRanges <- ranges 
-                let distances, _computedDistances = ranges.GetShortestDistances(computedDistances, statesInInnerGraph, goalsInInnerGraph)
-                computedDistances <- _computedDistances
-                distances
-                |> ResizeArray.choose (fun (_from,_to,distance) ->
-                    match distance with
-                    | Unreachable -> None
-                    | Reachable distance ->
-                        knownDistances.[innerGraphVerticesToStatesMap.[_from]].Add(
-                            (innerGraphVerticesToStatesMap.[_from],
-                            innerGraphVerticesToGoalsMap.[_to],
-                            distance))
-                        Some (
-                            innerGraphVerticesToStatesMap.[_from],
-                            innerGraphVerticesToGoalsMap.[_to],
-                            distance
-                            )
-                    )
-                |> fun r -> result.AddRange r
-        result
+        states
+        |> Array.choose (fun state ->
+            let cfg = cfgs.[state.method]
+            let state = {state with offset = cfg.ResolveBasicBlock state.offset}
+            let exists, distances = knownDistances.TryGetValue state
+            if exists then Some distances else None)
+        |> ResizeArray.concat
         
     let messagesProcessor = MailboxProcessor.Start(fun inbox ->
         let tryGetCfgInfo methodBase =
@@ -499,9 +534,9 @@ type ApplicationGraph() as this =
                         //toDot "cfg.dot"
                     | AddGoals positions -> addGoals positions
                     | RemoveGoal pos -> removeGoal pos
-                    | AddState pos -> addState pos
+                    | AddState state -> addState state
                     | MoveState (_from,_to) ->
-                        tryGetCfgInfo _to.method |> ignore                            
+                        tryGetCfgInfo _to.CodeLocation.method |> ignore                            
                         moveState _from _to
                     | GetShortestDistancesToGoals (replyChannel, states) ->
                         //states |> Array.map (fun state ->
@@ -536,16 +571,18 @@ type ApplicationGraph() as this =
     member this.AddCallEdge (sourceLocation : codeLocation) (targetLocation : codeLocation) =        
         messagesProcessor.Post <| AddCallEdge (sourceLocation, targetLocation)
 
-    member this.AddState (location:codeLocation) =            
-        messagesProcessor.Post <| AddState location
+    member this.AddState (state:IGraphTrackableState) =            
+        messagesProcessor.Post <| AddState state
         
-    member this.MoveState (fromLocation : codeLocation) (toLocation : codeLocation) =
+    member this.MoveState (fromLocation : codeLocation) (toLocation : IGraphTrackableState) =
         messagesProcessor.Post <| MoveState (fromLocation, toLocation)
 
     member x.AddGoal (location:codeLocation) =
         messagesProcessor.Post <| AddGoals [|location|]    
+    
     member x.AddGoals (locations:array<codeLocation>) =
         messagesProcessor.Post <| AddGoals locations
+    
     member x.RemoveGoal (location:codeLocation) =
         messagesProcessor.Post <| RemoveGoal location
     
@@ -554,6 +591,9 @@ type ApplicationGraph() as this =
             
     member this.GetGoalsReachableFromStates (states: array<codeLocation>) =            
         messagesProcessor.PostAndReply (fun ch -> GetReachableGoals(ch, states))
-
+    
+    //member this.NewNearestGoal = Event<unit>()
+    
+    //member this.DistancesUpdated = Event<unit>()
 module CFG =
     let applicationGraph = ApplicationGraph()

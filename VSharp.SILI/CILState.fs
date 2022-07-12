@@ -1,5 +1,6 @@
 namespace VSharp.Interpreter.IL
 
+open System.Runtime.InteropServices
 open VSharp
 open System.Text
 open VSharp.Core
@@ -42,7 +43,10 @@ type cilState =
             | _ when x.state.exceptionsRegister.UnhandledError -> Nop
             | _ -> internalfailf "Method is not finished! IpStack = %O" x.ipStack
         | _ -> internalfail "EvaluationStack size was bigger than 1"
-
+    interface IGraphTrackableState with
+        member this.CodeLocation = this.currentLoc
+        member this.CallStack = []
+    
 module internal CilStateOperations =
 
     let makeCilState curV initialEvaluationStackSize state =

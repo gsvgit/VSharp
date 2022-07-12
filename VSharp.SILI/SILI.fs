@@ -136,12 +136,12 @@ type public SILI(options : SiliOptions) =
                 pool.Value.StepDone(s, s::newStates)
             | _ -> ()
             let loc' = s.currentLoc
-            CFG.applicationGraph.MoveState loc loc'
+            CFG.applicationGraph.MoveState loc s
             let locationsForQuery = ResizeArray<_>([|loc'|])
             newStates |> Seq.iter (fun newState ->
                 let loc = currentLoc newState
                 locationsForQuery.Add loc
-                CFG.applicationGraph.AddState loc)
+                CFG.applicationGraph.AddState newState)
             let distances = CFG.applicationGraph.GetShortestDistancesToAllGoalsFromStates(locationsForQuery.ToArray())
             Logger.trace $"Reachable pairs: %A{distances.Count}"
             searcher.UpdateStates s newStates
