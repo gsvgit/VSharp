@@ -13,6 +13,10 @@ open FSharpx.Collections
 open Microsoft.FSharp.Collections
 open VSharp
 
+type IGraphTrackableState =
+    abstract member CodeLocation: codeLocation
+    abstract member CallStack: list<codeLocation*codeLocation>
+
 [<Struct>]
 type internal temporaryCallInfo = {callee: MethodWithBody; callFrom: offset; returnTo: offset}
 
