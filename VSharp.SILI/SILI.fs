@@ -176,12 +176,14 @@ type public SILI(options : SiliOptions) =
             | Stop -> __unreachable__()
 
     member private x.AnswerPobs entryPoint cmdArgs initialStates =
+        CFG.applicationGraph.RegisterMethod entryPoint
         statistics.ExplorationStarted()
         let mainPobs = coveragePobsForMethod entryPoint |> Seq.filter (fun pob -> pob.loc.offset <> 0)
         mainPobs
         |> Seq.map (fun pob -> pob.loc)
         |> Array.ofSeq
         |> CFG.applicationGraph.AddGoals
+        initialStates |> List.iter CFG.applicationGraph.AddState
         AssemblyManager.reset()
         entryPoint.Module.Assembly |> AssemblyManager.load 1
         searcher.Init entryPoint initialStates mainPobs
