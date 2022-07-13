@@ -256,16 +256,11 @@ type ApplicationGraph() as this =
     let mutable firstFreeVertexId = 0<inputGraphVertex>        
     let terminalForCFGEdge = 0<terminalSymbol>
     let mutable firstFreeCallTerminalId = 1<terminalSymbol>
-    let cfgToFirstVertexIdMapping = Dictionary<MethodBase,int<inputGraphVertex>>()
-    //let statesToInnerGraphVerticesMap = Dictionary<codeLocation, int<inputGraphVertex>>()
-    //let innerGraphVerticesToStatesMap = Dictionary<int<inputGraphVertex>, codeLocation>()
-    //let innerGraphVerticesToGoalsMap = Dictionary<int<inputGraphVertex>, codeLocation>()
+    let cfgToFirstVertexIdMapping = Dictionary<MethodBase,int<inputGraphVertex>>()    
     let goalsInInnerGraph = ResizeArray<_>()
     let allStates = HashSet<IGraphTrackableState>()
     let cfgs = Dictionary<MethodBase, CfgInfo>()    
-    let innerGraphVerticesToCodeLocationMap =        
-        let d = SortedDictionary<_,_>(comparer = RangesComparer())
-        d
+    let innerGraphVerticesToCodeLocationMap = SortedDictionary<_,_>(comparer = RangesComparer())
     let vertices = Dictionary<int<inputGraphVertex>, ResizeArray<InputGraphEdge>>()
    
     let getVertex (pos:codeLocation) =
