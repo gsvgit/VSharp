@@ -6,6 +6,7 @@ open CFPQ_GLL.GSS
 open CFPQ_GLL.InputGraph
 open CFPQ_GLL.RSM
 open CFPQ_GLL.SPPF
+open FSharpx.Collections
 
 type [<Measure>] distance
 
@@ -185,6 +186,11 @@ type GraphQueryEngine() as this =
         addReachabilityInfo startVertices
         updateDistances startVertices finalVertices
         
+    let addVertices newVertices =
+        for v in newVertices do
+            if not <| vertices.ContainsKey v
+            then vertices.Add(v,ResizeArray<_>())
+        
     let addStartVertices (vertices: array<StartVertex>) =        
         startVertices.UnionWith (HashSet vertices)
         let verticesToUpdate = vertices |> Array.filter (fun v -> not <| distancesCache.ContainsKey v)
@@ -209,6 +215,8 @@ type GraphQueryEngine() as this =
     interface IInputGraph with
         member this.GetOutgoingEdges v =
             vertices.[v]        
+    
+    member this.AddVertices vertices = addVertices vertices
     
     member this.AddCfgEdge edge = addCfgEdge edge
         
