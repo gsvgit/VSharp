@@ -10,6 +10,7 @@
       <Compile Include="Communication.fs" />
       <Compile Include="ILRewriter.fs" />
       <Compile Include="Instruction.fs" />
+      <Compile Include="GraphQueryEngine.fs" />
       <Compile Include="CFG.fs" />
       <Compile Include="Coverage.fs" />
     </ItemGroup>

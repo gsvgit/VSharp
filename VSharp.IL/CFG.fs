@@ -34,6 +34,7 @@ type CallInfo =
             ReturnTo = returnTo
             IsExternalStaticCall = isExternalStatic
         }
+
 type private BasicBlock (startVertex: offset) =
     let innerVertices = ResizeArray<offset>()
     let mutable finalVertex = None 
@@ -46,6 +47,7 @@ type private BasicBlock (startVertex: offset) =
                 | Some v -> v
                 | None -> failwith "Final vertex of this basic block is not specified yet."
         and set v = finalVertex <- Some v
+
 type CfgTemporaryData (methodBase : MethodBase) =
     let ilBytes = Instruction.getILBytes methodBase
     let exceptionHandlers = Instruction.getEHSBytes methodBase
@@ -204,11 +206,11 @@ type CfgInfo (cfg:CfgTemporaryData) =
             else
                 let mid = (l + r) / 2
                 let midValue = sortedOffsets.[mid]
-                if midValue = offset then midValue
-                elif midValue < offset then
-                    binSearch sortedOffsets offset (mid + 1) r
-                else
-                    binSearch sortedOffsets offset l (mid - 1)
+                if midValue = offset
+                then midValue
+                elif midValue < offset
+                then binSearch sortedOffsets offset (mid + 1) r
+                else binSearch sortedOffsets offset l (mid - 1)
     
         binSearch cfg.SortedOffsets offset 0 (cfg.SortedOffsets.Count - 1)
     
@@ -232,7 +234,7 @@ type CfgInfo (cfg:CfgTemporaryData) =
 type private ApplicationGraphMessage =
     | AddGoals of array<codeLocation>
     | RemoveGoal of codeLocation
-    | AddState of IGraphTrackableState
+    | AddStates of seq<IGraphTrackableState>
     | MoveState of positionForm:codeLocation * positionTo: IGraphTrackableState
     | AddCFG of Option<AsyncReplyChannel<CfgInfo>> *  MethodBase
     | AddCallEdge of callForm:codeLocation * callTo: codeLocation
@@ -240,6 +242,8 @@ type private ApplicationGraphMessage =
         of AsyncReplyChannel<ResizeArray<codeLocation * codeLocation * int>> * array<codeLocation>
     | GetReachableGoals
         of AsyncReplyChannel<Dictionary<codeLocation,HashSet<codeLocation>>> * array<codeLocation>
+    | GetDistanceToNearestGoal
+        of AsyncReplyChannel<seq<IGraphTrackableState * int>> * seq<IGraphTrackableState>
 
 type private RangesComparer() =
     interface IComparer<int<inputGraphVertex>*int<inputGraphVertex>> with
@@ -253,108 +257,39 @@ type private RangesComparer() =
             else failwithf $"You can rty try to compare incomparable ranges: (%A{x1},%A{x2}) and (%A{y1},%A{y2})"
       
 type ApplicationGraph() as this =        
-    let mutable firstFreeVertexId = 0<inputGraphVertex>        
-    let terminalForCFGEdge = 0<terminalSymbol>
-    let mutable firstFreeCallTerminalId = 1<terminalSymbol>
+    let mutable firstFreeVertexId = 0<inputGraphVertex>
     let cfgToFirstVertexIdMapping = Dictionary<MethodBase,int<inputGraphVertex>>()    
     let goalsInInnerGraph = ResizeArray<_>()
-    let allStates = HashSet<IGraphTrackableState>()
+    let stateToStartVertex = Dictionary<IGraphTrackableState, StartVertex>()
+    let startVertexToStates = Dictionary<StartVertex, HashSet<IGraphTrackableState>>()
     let cfgs = Dictionary<MethodBase, CfgInfo>()    
     let innerGraphVerticesToCodeLocationMap = SortedDictionary<_,_>(comparer = RangesComparer())
-    let vertices = Dictionary<int<inputGraphVertex>, ResizeArray<InputGraphEdge>>()
-   
-    let getVertex (pos:codeLocation) =
+    let existingCalls = HashSet<codeLocation*codeLocation>()
+    let queryEngine = GraphQueryEngine()
+    let codeLocationToVertex (pos:codeLocation) =
         cfgToFirstVertexIdMapping.[pos.method] + cfgs.[pos.method].ResolveBasicBlock pos.offset * 1<inputGraphVertex>
         
     let toDot filePath =
-        let subgraphs =
+        let clusters = 
             seq{
                 for kvp in cfgs do
                     let clusterName = kvp.Value.MethodBase.Name
-                    yield $"subgraph cluster_%s{clusterName} {{"
-                    yield $"label=%A{clusterName}"                    
-                    for vertex in kvp.Value.SortedOffsets do
-                        yield string (getVertex  {method = kvp.Value.MethodBase; offset = vertex})
-                    yield "}"                
-            }
-                       
-        let content =
-            seq{
-               yield "digraph G"
-               yield "{"
-               yield "node [shape = plaintext]"
-               yield! subgraphs
-               for kvp in vertices do
-                for e in kvp.Value do
-                    yield $"%i{kvp.Key} -> %i{e.TargetVertex} [label=%A{e.TerminalSymbol}]"
-               yield "}"
-            }
-        System.IO.File.WriteAllLines(filePath, content)
+                    let vertices =                     
+                        kvp.Value.SortedOffsets
+                        |> Seq.map (fun vertex -> codeLocationToVertex  {method = kvp.Value.MethodBase; offset = vertex})
+                    yield Cluster(clusterName, vertices)
+                }
     
-    let buildQuery () =
-        let startBox =
-            RSMBox(
-                0<rsmState>,
-                HashSet [|0<rsmState>|],
-                [|
-                    yield RSMEdges.TerminalEdge(0<rsmState>, terminalForCFGEdge, 0<rsmState>)
-                    yield RSMEdges.NonTerminalEdge(0<rsmState>, 1<rsmState>, 0<rsmState>)
-                    //for callSymbol in 1<terminalSymbol> .. 2<terminalSymbol> .. firstFreeCallTerminalId - 1<terminalSymbol> do
-                    for callSymbol in 2<terminalSymbol> .. 2<terminalSymbol> .. firstFreeCallTerminalId - 1<terminalSymbol> do
-                      yield RSMEdges.TerminalEdge(0<rsmState>, callSymbol, 0<rsmState>)
-                |]
-                )
-        let balancedBracketsBox =
-          let mutable firstFreeRsmState = 3<rsmState>
-          RSMBox(
-              1<rsmState>,
-              HashSet [|1<rsmState>; 2<rsmState>|],
-              [|
-                  yield RSMEdges.TerminalEdge(1<rsmState>, terminalForCFGEdge, 1<rsmState>)
-                  for callSymbol in 1<terminalSymbol> .. 2<terminalSymbol> .. firstFreeCallTerminalId - 1<terminalSymbol> do
-                      yield RSMEdges.TerminalEdge(1<rsmState>, callSymbol, firstFreeRsmState)
-                      yield RSMEdges.NonTerminalEdge(firstFreeRsmState, 0<rsmState>, firstFreeRsmState + 1<rsmState>)
-                      yield RSMEdges.TerminalEdge(firstFreeRsmState + 1<rsmState>, callSymbol + 1<terminalSymbol>, 2<rsmState>)
-                      firstFreeRsmState <- firstFreeRsmState + 2<rsmState>
-              |])
-        RSM([|startBox; balancedBracketsBox|], startBox)    
-
-    let mutable reachabilityInformationIsActual = false        
-    let mutable query = buildQuery()
-    let mutable reachableVertices = Dictionary<_,_>()
-    let mutable gss  = GSS()
-    let mutable matchedRanges = MatchedRanges(query)
-    let mutable computedDistances = Dictionary<_,_>()
-    let mutable knownDistances = Dictionary<int<inputGraphVertex>,ResizeArray<_>>()
-    let verticesWithActualReachabilityInfo = HashSet<_>()
-    let resetCfpqState () =
-        Logger.trace "CFPQ state reset."
-        query <- buildQuery()
-        reachableVertices.Clear()
-        gss <- GSS()
-        computedDistances.Clear()
-        verticesWithActualReachabilityInfo.Clear()
-        //knownDistances.Clear()
-        matchedRanges <- MatchedRanges(query)
-    
+        queryEngine.ToDot(clusters, filePath)
+                
     let buildCFG (methodBase:MethodBase) =
         Logger.trace $"Add CFG for %A{methodBase.Name}."
         let cfg = CfgTemporaryData(methodBase)
         for kvp in cfg.Edges do
-            let edges =
-                [|
-                    for targetOffset in kvp.Value do
-                        let targetVertex = firstFreeVertexId + targetOffset * 1<inputGraphVertex>
-                        if not <| vertices.ContainsKey targetVertex
-                        then vertices.Add (targetVertex, ResizeArray<_>())
-                        yield InputGraphEdge(terminalForCFGEdge, targetVertex)        
-                |]
             let srcVertex = firstFreeVertexId + kvp.Key * 1<inputGraphVertex>
-            let exists, outgoingEdges = vertices.TryGetValue srcVertex
-            
-            if not exists
-            then vertices.Add(srcVertex, ResizeArray edges)
-            else outgoingEdges.AddRange edges 
+            for targetOffset in kvp.Value do
+                let targetVertex = firstFreeVertexId + targetOffset * 1<inputGraphVertex>
+                queryEngine.AddCfgEdge <| Edge (srcVertex, targetVertex)        
             
         cfgToFirstVertexIdMapping.Add(methodBase, firstFreeVertexId)
         let nextFreeVertexIndex = firstFreeVertexId + cfg.ILBytes.Length * 1<inputGraphVertex>
@@ -366,84 +301,17 @@ type ApplicationGraph() as this =
     let getCodeLocation (vertex:int<inputGraphVertex>) =
         let firstVertexId, method = innerGraphVerticesToCodeLocationMap.[(vertex,vertex)]
         {method = method; offset = int (vertex - firstVertexId)}
-    
-    let updateReachabilityInfo (states:seq<IGraphTrackableState>) =             
-        let startVertices =
-            allStates
-            |> Seq.choose (fun state ->
-                let vertex = getVertex state.CodeLocation
-                if verticesWithActualReachabilityInfo.Contains vertex
-                then None
-                else
-                    let added = verticesWithActualReachabilityInfo.Add vertex
-                    assert added
-                    Some <| getVertex state.CodeLocation)
-            |> fun x -> HashSet<_> x
-        if startVertices.Count > 0
-        then
-            Logger.trace "GLL started!"
-            let res, newGSS = GLL.evalFromState reachableVertices gss  matchedRanges this (HashSet<_> startVertices) query Mode.AllPaths
-            gss <- newGSS
-            match res with
-            | QueryResult.ReachabilityFacts _ ->
-                failwith "Impossible!"
-            | QueryResult.MatchedRanges ranges ->
-                matchedRanges <- ranges        
-            reachabilityInformationIsActual <- true
-    
-    let updateDistances (states: seq<IGraphTrackableState>) goals =
-        if not reachabilityInformationIsActual
-        then updateReachabilityInfo allStates
-        let startVertices = states |> Seq.map (fun state -> getVertex state.CodeLocation)
-        let distances, _computedDistances = matchedRanges.GetShortestDistances(computedDistances, startVertices, goals)
-        startVertices |> Seq.iter (fun vertex ->            
-            let exists, distances = knownDistances.TryGetValue vertex
-            if exists
-            then distances.Clear()
-            else knownDistances.Add(vertex, ResizeArray<_>()))
-        computedDistances <- _computedDistances
-        distances
-        |> ResizeArray.iter (fun (_from,_to,distance) ->
-            match distance with
-            | Unreachable -> ()
-            | Reachable distance ->
-                let startCodeLocation = getCodeLocation _from                
-                knownDistances.[_from].Add(
-                    (startCodeLocation,
-                    getCodeLocation _to,
-                    distance))                
-            )
-                
-    let removeGoalFromReachable (removedGoal:codeLocation) =
-        knownDistances
-        |> Seq.iter (fun kvp ->
-            let removedCount = kvp.Value.RemoveAll(fun (_, _to, _) -> _to = removedGoal)
-            assert (removedCount > 0)            
-            )
-        
-    let addGoals (positions:array<codeLocation>) =
-        Logger.trace $"Add goals. Number of goals: %i{positions.Length}"
-        let newGoals = ResizeArray<_>()
-        for pos in positions do
-            let vertexInInnerGraph = getVertex pos
-            goalsInInnerGraph.Add vertexInInnerGraph
-            newGoals.Add vertexInInnerGraph                
-        updateDistances allStates newGoals
-        
-    let removeGoal (pos:codeLocation) =
-        let vertexInInnerGraph = getVertex pos        
-        goalsInInnerGraph.Remove vertexInInnerGraph |> ignore
-        removeGoalFromReachable pos
-        
-    let addCallEdge (callSource:codeLocation) (callTarget:codeLocation) =
-        //Logger.trace $"Add call edge from %A{callSource.method}, %i{callSource.offset} to %A{callTarget.method}."       
+               
+    let addCallEdge (callSource:codeLocation) (callTarget:codeLocation) =   
         let callerMethodCfgInfo = cfgs.[callSource.method]
         let calledMethodCfgInfo = cfgs.[callTarget.method]
-        let callFrom = getVertex callSource
-        let callTo = getVertex callTarget                    
+        let callFrom = codeLocationToVertex callSource
+        let callTo = codeLocationToVertex callTarget                    
 
-        if not (vertices.ContainsKey callFrom && vertices.[callFrom].Exists (fun edg -> edg.TargetVertex = callTo))
+        if not <| existingCalls.Contains (callSource, callTarget)
         then
+            let added = existingCalls.Add(callSource,callTarget)
+            assert added
             let returnTo =
                 if Reflection.isStaticConstructor callTarget.method
                 then callFrom
@@ -451,77 +319,66 @@ type ApplicationGraph() as this =
                     let exists, location = callerMethodCfgInfo.Calls.TryGetValue callSource.offset
                     if exists
                     then
-                        let returnTo = getVertex {callSource with offset = location.ReturnTo}
-                        let removed = vertices.[callFrom].Remove(InputGraphEdge(terminalForCFGEdge,returnTo))
-                        assert removed
+                        let returnTo = codeLocationToVertex {callSource with offset = location.ReturnTo}
+                        queryEngine.RemoveCfgEdge (Edge (callFrom, returnTo))
                         returnTo
-                    else getVertex {callSource with offset = callerMethodCfgInfo.Sinks.[0]}
-            if not <| vertices.ContainsKey callFrom
-            then vertices.Add(callFrom, ResizeArray())
-            InputGraphEdge (firstFreeCallTerminalId, callTo)
-            |> vertices.[callFrom].Add
-            let returnFromPoints = calledMethodCfgInfo.Sinks |>  Array.map(fun sink -> getVertex {callTarget with offset = sink})  
-            for returnFrom in returnFromPoints do
-                if not <| vertices.ContainsKey returnFrom
-                then vertices.Add(returnFrom, ResizeArray())
-                InputGraphEdge (firstFreeCallTerminalId + 1<terminalSymbol>, returnTo)
-                |> vertices.[returnFrom].Add
-                
-            firstFreeCallTerminalId <- firstFreeCallTerminalId + 2<terminalSymbol>            
-            resetCfpqState()
-            updateReachabilityInfo allStates
-            updateDistances allStates goalsInInnerGraph
+                    else codeLocationToVertex {callSource with offset = callerMethodCfgInfo.Sinks.[0]}
+            let callEdge = Edge(callFrom, callTo)
+            let returnEdges =
+                calledMethodCfgInfo.Sinks
+                |> Array.map(fun sink -> codeLocationToVertex {callTarget with offset = sink})
+                |> Array.map (fun returnFrom -> Edge(returnFrom, returnTo))
+            queryEngine.AddCallReturnEdges (callEdge, returnEdges)            
         
-    let moveState (initialPosition: codeLocation) (movedState: IGraphTrackableState) =
-        allStates.Add movedState |> ignore
-        let initialVertexInInnerGraph = getVertex initialPosition            
-        let finalVertexInnerGraph = getVertex movedState.CodeLocation 
+    let moveState (initialPosition: codeLocation) (stateWithNewPosition: IGraphTrackableState) =        
+        let initialVertexInInnerGraph = codeLocationToVertex initialPosition            
+        let finalVertexInnerGraph = codeLocationToVertex stateWithNewPosition.CodeLocation 
         if initialVertexInInnerGraph <> finalVertexInnerGraph
         then
-            updateReachabilityInfo [movedState]
-            if not <| knownDistances.ContainsKey (getVertex movedState.CodeLocation) 
-            then updateDistances [movedState] goalsInInnerGraph
+            let startVertex = StartVertex(codeLocationToVertex stateWithNewPosition.CodeLocation, [])
+            let previousStartVertex = stateToStartVertex.[stateWithNewPosition]
+            let exists, states = startVertexToStates.TryGetValue startVertex
+            if exists
+            then
+                let added = states.Add stateWithNewPosition
+                assert added
+            else startVertexToStates.Add(startVertex, HashSet<_>[|stateWithNewPosition|])
+            stateToStartVertex.[stateWithNewPosition] <- startVertex
+            let removed = startVertexToStates.[previousStartVertex].Remove stateWithNewPosition
+            assert removed
+            queryEngine.AddStartVertex startVertex
+            if startVertexToStates.[previousStartVertex].Count = 0
+            then queryEngine.RemoveStartVertex previousStartVertex 
             
-    let addState (state:IGraphTrackableState) =
-        allStates.Add state |> ignore
-        updateReachabilityInfo [state]
-        if not <| knownDistances.ContainsKey (getVertex state.CodeLocation) 
-        then updateDistances [state] goalsInInnerGraph
-        
-    let getReachableGoals (states:array<codeLocation>) = Dictionary<_,_>()
-        (*Logger.trace $"Get reachable goals for %A{states}."
-        let query = buildQuery()
-        let statesInInnerGraph =
+    let addStates (states:array<IGraphTrackableState>) =
+        Logger.trace $"states: %i{states.Length}"
+        let startVertices =
             states
             |> Array.map (fun state ->
-                let cfg = cfgs.[state.method]
-                cfgToFirstVertexIdMapping.[state.method] + cfg.ResolveBasicBlock(state.offset) * 1<inputGraphVertex>)
-        let res = GLL.eval this statesInInnerGraph query Mode.ReachabilityOnly
-        match res with
-        | QueryResult.ReachabilityFacts facts ->
-            let res = Dictionary<_,_>()
-            for fact in facts do
-                res.Add(innerGraphVerticesToStatesMap.[fact.Key], HashSet<_>())
-                for reachable in fact.Value do
-                    let exists, goalPosition = innerGraphVerticesToGoalsMap.TryGetValue reachable
-                    if exists then res.[innerGraphVerticesToStatesMap.[fact.Key]].Add goalPosition |> ignore
-            res
+                let startVertex = StartVertex (codeLocationToVertex state.CodeLocation, [])
+                stateToStartVertex.Add(state, startVertex)
+                let exists, states = startVertexToStates.TryGetValue startVertex
+                if exists
+                then
+                    let added = states.Add state
+                    assert added
+                else startVertexToStates.Add(startVertex, HashSet<_>[|state|])                    
+                startVertex)
             
-        | _ -> failwith "Impossible!"
-        *)
-    let getShortestDistancesToGoals (states:array<codeLocation>) =
+        queryEngine.AddStartVertices startVertices
+    
+    let getShortestDistancesToGoals (states:array<codeLocation>) = 
         states
-        |> Array.choose (fun state ->
-            let exists, distances = knownDistances.TryGetValue (getVertex state)
-            if exists then Some distances else None)
+        |> Array.choose (fun state -> None)
+            //let exists, distances = knownDistances.TryGetValue (codeLocationToVertex state)
+            //if exists then Some distances else None)
         |> ResizeArray.concat
-        
+            
     let messagesProcessor = MailboxProcessor.Start(fun inbox ->
         let tryGetCfgInfo methodBase =
             let exists,cfgInfo = cfgs.TryGetValue methodBase  
             if not exists
             then
-                reachabilityInformationIsActual <- false
                 let cfg = buildCFG methodBase
                 let cfgInfo = CfgInfo cfg
                 cfgs.Add(methodBase, cfgInfo)
@@ -546,20 +403,28 @@ type ApplicationGraph() as this =
                         tryGetCfgInfo _to.method |> ignore                       
                         addCallEdge _from _to
                         //toDot "cfg.dot"
-                    | AddGoals positions -> addGoals positions
-                    | RemoveGoal pos -> removeGoal pos
-                    | AddState state -> addState state
+                    | AddGoals positions ->
+                        positions
+                        |> Array.map codeLocationToVertex 
+                        |> queryEngine.AddFinalVertices 
+                    | RemoveGoal pos ->
+                        codeLocationToVertex pos
+                        |> queryEngine.RemoveFinalVertex
+                    | AddStates states -> Array.ofSeq states |> addStates 
                     | MoveState (_from,_to) ->
                         tryGetCfgInfo _to.CodeLocation.method |> ignore                            
                         moveState _from _to
                     | GetShortestDistancesToGoals (replyChannel, states) ->
-                        //states |> Array.map (fun state ->
-                        //    let cfg = cfgs.[state.method]
-                        //    {state with offset = cfg.ResolveBasicBlock state.offset})
-                        //|> ignore
-                        //replyChannel.Reply(ResizeArray<_>())
                         replyChannel.Reply (getShortestDistancesToGoals states)
-                    | GetReachableGoals (replyChannel, states) -> replyChannel.Reply (getReachableGoals states)
+                    | GetDistanceToNearestGoal (replyChannel, states) ->
+                        let result =
+                            states
+                            |> Seq.choose (fun state ->
+                                match queryEngine.GetDistanceToNearestGoal stateToStartVertex.[state] with
+                                | Some (_,distance) -> Some (state, int distance)
+                                | None -> None)
+                        replyChannel.Reply result
+                    | GetReachableGoals (replyChannel, states) -> replyChannel.Reply (Dictionary<_,_>())
                 with
                 | e ->
                     Logger.error $"Something wrong in application graph messages processor: \n %A{e} \n %s{e.Message} \n %s{e.StackTrace}"
@@ -575,22 +440,20 @@ type ApplicationGraph() as this =
             raise e
             )
 
-    interface IInputGraph with
-        member this.GetOutgoingEdges v =
-            vertices.[v]
-
     member this.GetCfg (methodBase: MethodBase) =        
             messagesProcessor.PostAndReply (fun ch -> AddCFG (Some ch, methodBase))
             
-    member this.RegisterMethod (methodBase: MethodBase) =
-        Logger.trace "Register method"    
+    member this.RegisterMethod (methodBase: MethodBase) =            
         messagesProcessor.Post (AddCFG (None, methodBase))
     
     member this.AddCallEdge (sourceLocation : codeLocation) (targetLocation : codeLocation) =        
         messagesProcessor.Post <| AddCallEdge (sourceLocation, targetLocation)
 
     member this.AddState (state:IGraphTrackableState) =            
-        messagesProcessor.Post <| AddState state
+        messagesProcessor.Post <| AddStates [|state|]
+        
+    member this.AddStates (states:seq<IGraphTrackableState>) =            
+        messagesProcessor.Post <| AddStates states
         
     member this.MoveState (fromLocation : codeLocation) (toLocation : IGraphTrackableState) =
         messagesProcessor.Post <| MoveState (fromLocation, toLocation)
@@ -606,12 +469,12 @@ type ApplicationGraph() as this =
     
     member this.GetShortestDistancesToAllGoalsFromStates (states: array<codeLocation>) =
         messagesProcessor.PostAndReply (fun ch -> GetShortestDistancesToGoals(ch, states))
+        
+    member this.GetDistanceToNearestGoal (states: seq<IGraphTrackableState>) =
+        messagesProcessor.PostAndReply (fun ch -> GetDistanceToNearestGoal(ch, states))
             
     member this.GetGoalsReachableFromStates (states: array<codeLocation>) =            
         messagesProcessor.PostAndReply (fun ch -> GetReachableGoals(ch, states))
-    
-    //member this.NewNearestGoal = Event<unit>()
-    
-    //member this.DistancesUpdated = Event<unit>()
+
 module CFG =
     let applicationGraph = ApplicationGraph()

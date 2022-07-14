@@ -142,8 +142,8 @@ type public SILI(options : SiliOptions) =
                 let loc = currentLoc newState
                 locationsForQuery.Add loc
                 CFG.applicationGraph.AddState newState)
-            let distances = CFG.applicationGraph.GetShortestDistancesToAllGoalsFromStates(locationsForQuery.ToArray())
-            Logger.trace $"Reachable pairs: %A{distances.Count}"
+            let distances = CFG.applicationGraph.GetDistanceToNearestGoal(Seq.cast<_> (s::newStates))
+            Logger.trace $"Reachable pairs: %A{Seq.length distances}"
             searcher.UpdateStates s newStates
 
     member private x.Backward p' s' EP =
@@ -179,11 +179,11 @@ type public SILI(options : SiliOptions) =
         CFG.applicationGraph.RegisterMethod entryPoint
         statistics.ExplorationStarted()
         let mainPobs = coveragePobsForMethod entryPoint |> Seq.filter (fun pob -> pob.loc.offset <> 0)
+        CFG.applicationGraph.AddStates (Seq.cast<IGraphTrackableState> initialStates)
         mainPobs
         |> Seq.map (fun pob -> pob.loc)
         |> Array.ofSeq
-        |> CFG.applicationGraph.AddGoals
-        initialStates |> List.iter CFG.applicationGraph.AddState
+        |> CFG.applicationGraph.AddGoals        
         AssemblyManager.reset()
         entryPoint.Module.Assembly |> AssemblyManager.load 1
         searcher.Init entryPoint initialStates mainPobs
