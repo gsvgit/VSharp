@@ -291,7 +291,7 @@ type ApplicationGraph() as this =
                 let targetVertex = firstFreeVertexId + targetOffset * 1<inputGraphVertex>
                 queryEngine.AddCfgEdge <| Edge (srcVertex, targetVertex)        
             
-        cfgToFirstVertexIdMapping.Add(methodBase, firstFreeVertexId)
+        cfgToFirstVertexIdMapping.Add(methodBase, firstFreeVertexId)        
         let nextFreeVertexIndex = firstFreeVertexId + cfg.ILBytes.Length * 1<inputGraphVertex>
         innerGraphVerticesToCodeLocationMap.Add((firstFreeVertexId, nextFreeVertexIndex - 1<inputGraphVertex>),(firstFreeVertexId, methodBase))
         firstFreeVertexId <- nextFreeVertexIndex
@@ -382,6 +382,7 @@ type ApplicationGraph() as this =
                 let cfg = buildCFG methodBase
                 let cfgInfo = CfgInfo cfg
                 cfgs.Add(methodBase, cfgInfo)
+                queryEngine.AddVertices (cfg.SortedOffsets |> ResizeArray.map (fun offset -> codeLocationToVertex {offset = offset; method = methodBase}))
                 cfgInfo
             else cfgInfo
             
