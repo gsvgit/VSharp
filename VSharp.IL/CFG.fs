@@ -150,7 +150,6 @@ type CfgTemporaryData (methodBase : MethodBase) =
                     dfs' currentBasicBlock offset
                 | ExceptionMechanism ->
                     //TODO gsv fix it.
-                    Logger.trace $"Exception mechanism: %A{currentVertex}"
                     currentBasicBlock.FinalVertex <- currentVertex
                     addEdge currentBasicBlock.StartVertex currentVertex
                     calls.Add(CallInfo(currentVertex,currentVertex+1))
@@ -351,7 +350,6 @@ type ApplicationGraph() as this =
             then queryEngine.RemoveStartVertex previousStartVertex 
             
     let addStates (states:array<IGraphTrackableState>) =
-        Logger.trace $"states: %i{states.Length}"
         let startVertices =
             states
             |> Array.map (fun state ->

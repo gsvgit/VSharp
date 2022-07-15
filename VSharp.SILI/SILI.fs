@@ -143,7 +143,7 @@ type public SILI(options : SiliOptions) =
                 locationsForQuery.Add loc
                 CFG.applicationGraph.AddState newState)
             let distances = CFG.applicationGraph.GetDistanceToNearestGoal(Seq.cast<_> (s::newStates))
-            Logger.trace $"Reachable pairs: %A{Seq.length distances}"
+            Logger.trace $"Distances to nearest goals: %A{Array.ofSeq distances |> Array. map snd}"
             searcher.UpdateStates s newStates
 
     member private x.Backward p' s' EP =
