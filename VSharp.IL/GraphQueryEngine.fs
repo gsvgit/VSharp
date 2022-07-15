@@ -116,6 +116,7 @@ type GraphQueryEngine() as this =
     let distancesCache = Dictionary<StartVertex,DistancesStorage>()
    
     let buildQuery () =
+    (*
         let startBox =
             RSMBox(
                 0<rsmState>,
@@ -128,7 +129,7 @@ type GraphQueryEngine() as this =
                       yield RSMEdges.TerminalEdge(0<rsmState>, callSymbol, 0<rsmState>)
                 |]
                 )
-        let balancedBracketsBox =
+        (*let balancedBracketsBox =
           let mutable firstFreeRsmState = 3<rsmState>
           RSMBox(
               1<rsmState>,
@@ -140,7 +141,44 @@ type GraphQueryEngine() as this =
                       yield RSMEdges.NonTerminalEdge(firstFreeRsmState, 0<rsmState>, firstFreeRsmState + 1<rsmState>)
                       yield RSMEdges.TerminalEdge(firstFreeRsmState + 1<rsmState>, callSymbol + 1<terminalSymbol>, 2<rsmState>)
                       firstFreeRsmState <- firstFreeRsmState + 2<rsmState>
-              |])
+              |])*)
+        let balancedBracketsBox =
+          let mutable firstFreeRsmState = 3<rsmState>
+          RSMBox(
+              1<rsmState>,
+              HashSet [|1<rsmState>; 2<rsmState>|],
+              [|              
+                  for callSymbol in 1<terminalSymbol> .. 2<terminalSymbol> .. firstFreeCallTerminalId - 1<terminalSymbol> do
+                      yield RSMEdges.TerminalEdge(1<rsmState>, callSymbol, firstFreeRsmState)
+                      yield RSMEdges.NonTerminalEdge(firstFreeRsmState, 0<rsmState>, firstFreeRsmState + 1<rsmState>)
+                      yield RSMEdges.TerminalEdge(firstFreeRsmState + 1<rsmState>, callSymbol + 1<terminalSymbol>, 2<rsmState>)
+                      yield RSMEdges.TerminalEdge(firstFreeRsmState, terminalForCFGEdge, firstFreeRsmState)
+                      yield RSMEdges.TerminalEdge(firstFreeRsmState + 1<rsmState>, terminalForCFGEdge, firstFreeRsmState + 1<rsmState>)
+                      firstFreeRsmState <- firstFreeRsmState + 2<rsmState>
+              |])*)
+        let startBox =
+            RSMBox(
+                0<rsmState>,
+                HashSet [|0<rsmState>; 1<rsmState>|],
+                [|                    
+                    yield RSMEdges.NonTerminalEdge(0<rsmState>, 2<rsmState>, 1<rsmState>)                    
+                    for callSymbol in 2<terminalSymbol> .. 2<terminalSymbol> .. firstFreeCallTerminalId - 1<terminalSymbol> do
+                      yield RSMEdges.TerminalEdge(1<rsmState>, callSymbol, 0<rsmState>)
+                |]
+                )
+        let balancedBracketsBox =
+          let mutable firstFreeRsmState = 3<rsmState>
+          RSMBox(
+              2<rsmState>,
+              HashSet [|2<rsmState>|],
+              [|
+                  yield RSMEdges.TerminalEdge (2<rsmState>, terminalForCFGEdge, 2<rsmState>)
+                  for callSymbol in 1<terminalSymbol> .. 2<terminalSymbol> .. firstFreeCallTerminalId - 1<terminalSymbol> do
+                      yield RSMEdges.TerminalEdge(2<rsmState>, callSymbol, firstFreeRsmState)
+                      yield RSMEdges.NonTerminalEdge(firstFreeRsmState, 2<rsmState>, firstFreeRsmState + 1<rsmState>)
+                      yield RSMEdges.TerminalEdge(firstFreeRsmState + 1<rsmState>, callSymbol + 1<terminalSymbol>, 2<rsmState>)                  
+                      firstFreeRsmState <- firstFreeRsmState + 2<rsmState>
+          |])
         RSM([|startBox; balancedBracketsBox|], startBox)
     
     let cfpqState = CfpqState(buildQuery())

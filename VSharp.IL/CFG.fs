@@ -443,7 +443,7 @@ type ApplicationGraph() as this =
                     | _ -> ()
         }            
     )
-    
+    (*
     let tryGetCfgInfo methodBase =
         let exists,cfgInfo = cfgs.TryGetValue methodBase  
         if not exists
@@ -454,7 +454,7 @@ type ApplicationGraph() as this =
             queryEngine.AddVertices (cfg.SortedOffsets |> ResizeArray.map (fun offset -> getVertexByCodeLocation {offset = offset; method = methodBase}))
             cfgInfo
         else cfgInfo
-
+*)
     do
         messagesProcessor.Error.Add(fun e ->
             Logger.error $"Something wrong in application graph messages processor: \n %A{e} \n %s{e.Message} \n %s{e.StackTrace}"
@@ -462,67 +462,67 @@ type ApplicationGraph() as this =
             )
 
     member this.GetCfg (methodBase: MethodBase) =        
-            //messagesProcessor.PostAndReply (fun ch -> AddCFG (Some ch, methodBase))
-        tryGetCfgInfo methodBase
+         messagesProcessor.PostAndReply (fun ch -> AddCFG (Some ch, methodBase))
+        //tryGetCfgInfo methodBase
             
     member this.RegisterMethod (methodBase: MethodBase) =            
-        //messagesProcessor.Post (AddCFG (None, methodBase))        
-        tryGetCfgInfo methodBase |> ignore           
+        messagesProcessor.Post (AddCFG (None, methodBase))        
+        //tryGetCfgInfo methodBase |> ignore           
     
     member this.AddCallEdge (sourceLocation : codeLocation) (targetLocation : codeLocation) =        
-        //messagesProcessor.Post <| AddCallEdge (sourceLocation, targetLocation)
-        tryGetCfgInfo sourceLocation.method |> ignore
-        tryGetCfgInfo targetLocation.method |> ignore                       
-        addCallEdge sourceLocation targetLocation
-        toDot "cfg_prof.dot"
+        messagesProcessor.Post <| AddCallEdge (sourceLocation, targetLocation)
+        //tryGetCfgInfo sourceLocation.method |> ignore
+        //tryGetCfgInfo targetLocation.method |> ignore                       
+        //addCallEdge sourceLocation targetLocation
+        //toDot "cfg_prof.dot"
 
     member this.AddState (state:IGraphTrackableState) =            
-        //messagesProcessor.Post <| AddStates [|state|]
-        [|state|] |> addStates
+        messagesProcessor.Post <| AddStates [|state|]
+        //[|state|] |> addStates
         
     member this.AddStates (states:seq<IGraphTrackableState>) =            
-        //messagesProcessor.Post <| AddStates states
-        Array.ofSeq states |> addStates
+        messagesProcessor.Post <| AddStates states
+        //Array.ofSeq states |> addStates
         
     member this.MoveState (fromLocation : codeLocation) (toLocation : IGraphTrackableState) =
-        //messagesProcessor.Post <| MoveState (fromLocation, toLocation)
-        tryGetCfgInfo toLocation.CodeLocation.method |> ignore                            
-        moveState fromLocation toLocation
+        messagesProcessor.Post <| MoveState (fromLocation, toLocation)
+        //tryGetCfgInfo toLocation.CodeLocation.method |> ignore                            
+        //moveState fromLocation toLocation
 
     member x.AddGoal (location:codeLocation) =
-        //messagesProcessor.Post <| AddGoals [|location|]
-        [|location|]
-        |> Array.map getVertexByCodeLocation 
-        |> queryEngine.AddFinalVertices
+        messagesProcessor.Post <| AddGoals [|location|]
+        //[|location|]
+        //|> Array.map getVertexByCodeLocation 
+        //|> queryEngine.AddFinalVertices
     
     member x.AddGoals (locations:array<codeLocation>) =
-        //messagesProcessor.Post <| AddGoals locations
-        locations
-        |> Array.map getVertexByCodeLocation 
-        |> queryEngine.AddFinalVertices
+        messagesProcessor.Post <| AddGoals locations
+        //locations
+        //|> Array.map getVertexByCodeLocation 
+        //|> queryEngine.AddFinalVertices
     
     member x.RemoveGoal (location:codeLocation) =
-        //messagesProcessor.Post <| RemoveGoal location
-        getVertexByCodeLocation location
-        |> queryEngine.RemoveFinalVertex
+        messagesProcessor.Post <| RemoveGoal location
+        //getVertexByCodeLocation location
+        //|> queryEngine.RemoveFinalVertex
     
     member this.GetShortestDistancesToAllGoalsFromStates (states: array<codeLocation>) =
-        //messagesProcessor.PostAndReply (fun ch -> GetShortestDistancesToGoals(ch, states))
-        ResizeArray<_>()
+        messagesProcessor.PostAndReply (fun ch -> GetShortestDistancesToGoals(ch, states))
+        //ResizeArray<_>()
         
     member this.GetDistanceToNearestGoal (states: seq<IGraphTrackableState>) =
-        //messagesProcessor.PostAndReply (fun ch -> GetDistanceToNearestGoal(ch, states))
-        let result =
-            states
-            |> Seq.choose (fun state ->
-                match queryEngine.GetDistanceToNearestGoal stateToStartVertex.[state] with
-                | Some (_,distance) -> Some (state, int distance)
-                | None -> None)
-        result
+        messagesProcessor.PostAndReply (fun ch -> GetDistanceToNearestGoal(ch, states))
+        //let result =
+        //    states
+        //    |> Seq.choose (fun state ->
+        //        match queryEngine.GetDistanceToNearestGoal stateToStartVertex.[state] with
+        //        | Some (_,distance) -> Some (state, int distance)
+        //        | None -> None)
+        //result
             
     member this.GetGoalsReachableFromStates (states: array<codeLocation>) =            
-        //messagesProcessor.PostAndReply (fun ch -> GetReachableGoals(ch, states))
-        Dictionary<_,_>()
+        messagesProcessor.PostAndReply (fun ch -> GetReachableGoals(ch, states))
+        //Dictionary<_,_>()
 
 module CFG =
     let applicationGraph = ApplicationGraph()
