@@ -144,47 +144,52 @@ type GraphQueryEngine() as this =
     
     let cfpqState = CfpqState(buildQuery())
     
-    let addReachabilityInfo (startVertices:seq<StartVertex>) =
-        for vertex in startVertices do
-            if not <| distancesCache.ContainsKey vertex
-            then
-                let distances = DistancesStorage()                
-                distancesCache.Add(vertex, distances)
+    let addReachabilityInfo (startVertices:seq<StartVertex>) =        
+        if Seq.length startVertices > 0
+        then
+            //Logger.trace $"GLL started. Vertices in graph: %i{vertices.Count}. Start vertices: %A{Array.ofSeq startVertices |> Array.map (fun v -> v.Vertex)}."
+            Logger.trace $"GLL started. Vertices in graph: %i{vertices.Count}. Start vertices count: %A{Seq.length startVertices}."
+            let startGLL = System.DateTime.Now
+            for vertex in startVertices do
+                if not <| distancesCache.ContainsKey vertex
+                then
+                    let distances = DistancesStorage()                
+                    distancesCache.Add(vertex, distances)
+                    
+            //TODO Handle history
+            let startVertices =
+                startVertices
+                |> Seq.map (fun (v:StartVertex) -> v.Vertex)
+                |> HashSet<_>
                 
-        //TODO Handle history
-        let startVertices =
-            startVertices
-            |> Seq.map (fun (v:StartVertex) -> v.Vertex)
-            |> HashSet<_>
-            
-        let res = evalFromState cfpqState.ReachableVertices cfpqState.GSS cfpqState.MatchedRanges this startVertices cfpqState.Query Mode.AllPaths
-        match res with
-        | QueryResult.ReachabilityFacts _ ->
-            failwith "Impossible!"
-        | QueryResult.MatchedRanges ranges ->
-            cfpqState.MatchedRangesToTypes <- ranges.GetRangesToTypes()
-    
+            let res = evalFromState cfpqState.ReachableVertices cfpqState.GSS cfpqState.MatchedRanges this startVertices cfpqState.Query Mode.AllPaths            
+            let endGll = System.DateTime.Now
+            match res with
+            | QueryResult.ReachabilityFacts _ ->
+                failwith "Impossible!"
+            | QueryResult.MatchedRanges ranges -> ()
+                //cfpqState.MatchedRangesToTypes <- ranges.GetRangesToTypes()
+            let rangesConversionEnd = System.DateTime.Now
+            Logger.trace $"GLL finished. GLL running time: %A{(endGll - startGLL).TotalMilliseconds} ms. Ranges conversion time: %A{(rangesConversionEnd - endGll).TotalMilliseconds} ms."
+        
     let updateDistances startVertices finalVertices =
         //TODO Handle history
         let startVertices = startVertices |> Seq.map (fun (v:StartVertex) -> v.Vertex)
         let distances =
-            cfpqState.MatchedRanges.GetShortestDistances(cfpqState.ComputedDistances, cfpqState.MatchedRangesToTypes, startVertices, finalVertices)
+            cfpqState.MatchedRanges.GetShortestDistances(cfpqState.ComputedDistances, startVertices, finalVertices)
         for _from,_to,distance in distances do
             match distance with            
             | Reachable d -> distancesCache.[StartVertex(_from,[])].AddOrUpdate(_to, d*1<distance>) //TODO Handle history
             | Unreachable -> ()
         
-    let addCfgEdge (edge:Edge) = 
+    let addCfgEdge (edge:Edge) =
         let exists, outgoingEdges = vertices.TryGetValue edge.StartVertex
         let newEdge = InputGraphEdge(terminalForCFGEdge, edge.FinalVertex)
         if exists
         then outgoingEdges.Add newEdge
         else vertices.Add(edge.StartVertex, ResizeArray<_>[|newEdge|])
         if not <| vertices.ContainsKey edge.FinalVertex
-        then vertices.Add(edge.FinalVertex, ResizeArray<_>())
-        cfpqState.Reset (buildQuery())
-        addReachabilityInfo startVertices
-        updateDistances startVertices finalVertices
+        then vertices.Add(edge.FinalVertex, ResizeArray<_>())        
         
     let addVertices newVertices =
         for v in newVertices do
@@ -235,6 +240,12 @@ type GraphQueryEngine() as this =
             |> vertices.[edge.StartVertex].Add
             
         firstFreeCallTerminalId <- firstFreeCallTerminalId + 2<terminalSymbol>
+        cfpqState.Reset (buildQuery())
+        distancesCache.Clear()
+        //let startVertices =
+        //        vertices.Keys |> Seq.map (fun v -> StartVertex(v,[]))
+        addReachabilityInfo startVertices
+        updateDistances startVertices finalVertices
 
     member this.AddFinalVertex vertex = addFinalVertices [|vertex|]
         
