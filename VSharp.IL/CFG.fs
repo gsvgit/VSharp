@@ -146,9 +146,11 @@ type internal CfgTemporaryData (method : MethodWithBody) =
                     currentBasicBlock.FinalVertex <- currentVertex
                     addEdge currentBasicBlock.StartVertex currentVertex
                 | UnconditionalBranch target ->
-                    currentBasicBlock.FinalVertex <- currentVertex
-                    addEdge currentBasicBlock.StartVertex currentVertex
-                    dealWithJump currentVertex target
+                    //currentBasicBlock.FinalVertex <- currentVertex
+                    //addEdge currentBasicBlock.StartVertex currentVertex
+                    //dealWithJump currentVertex target
+                    currentBasicBlock.AddVertex target
+                    dfs' currentBasicBlock target
                 | ConditionalBranch (fallThrough, offsets) ->
                     currentBasicBlock.FinalVertex <- currentVertex
                     addEdge currentBasicBlock.StartVertex currentVertex
@@ -403,6 +405,17 @@ type ApplicationGraph() as this =
                     | _ -> ()
         }
     )
+    
+    let tryGetCfgInfo methodBase =
+        let exists,cfgInfo = cfgs.TryGetValue methodBase  
+        if not exists
+        then
+            let cfg = buildCFG methodBase
+            let cfgInfo = CfgInfo cfg
+            cfgs.Add(methodBase, cfgInfo)
+            queryEngine.AddVertices (cfg.SortedOffsets |> ResizeArray.map (fun offset -> getVertexByCodeLocation {offset = offset; method = methodBase}))
+            cfgInfo
+        else cfgInfo
 
     do
         messagesProcessor.Error.Add(fun e ->
@@ -426,7 +439,9 @@ type ApplicationGraph() as this =
         messagesProcessor.Post <| AddForkedStates (parentState,states)
 
     member this.MoveState (fromLocation : codeLocation) (toLocation : IGraphTrackableState) =
-        messagesProcessor.Post <| MoveState (fromLocation, toLocation)
+        //messagesProcessor.Post <| MoveState (fromLocation, toLocation)
+        tryGetCfgInfo toLocation.CodeLocation.method |> ignore                            
+        moveState fromLocation toLocation
 
     member x.AddGoal (location:codeLocation) =
         messagesProcessor.Post <| AddGoals [|location|]

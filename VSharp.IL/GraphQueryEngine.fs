@@ -1,6 +1,7 @@
 namespace VSharp
 
 open System.Collections.Generic
+open CFPQ_GLL
 open CFPQ_GLL.GLL
 open CFPQ_GLL.GSS
 open CFPQ_GLL.InputGraph
@@ -162,7 +163,8 @@ type GraphQueryEngine() as this =
                 |> Seq.map (fun (v:StartVertex) -> v.Vertex)
                 |> HashSet<_>
                 
-            let res = evalFromState cfpqState.ReachableVertices cfpqState.GSS cfpqState.MatchedRanges this startVertices cfpqState.Query Mode.AllPaths            
+            let res = evalFromState cfpqState.ReachableVertices cfpqState.GSS cfpqState.MatchedRanges this startVertices cfpqState.Query Mode.AllPaths
+                //GLL.eval this startVertices cfpqState.Query Mode.AllPaths
             let endGll = System.DateTime.Now
             match res with
             | QueryResult.ReachabilityFacts _ ->
