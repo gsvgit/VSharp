@@ -405,7 +405,7 @@ type ApplicationGraph() as this =
                     | _ -> ()
         }
     )
-    
+    (*
     let tryGetCfgInfo methodBase =
         let exists,cfgInfo = cfgs.TryGetValue methodBase  
         if not exists
@@ -416,7 +416,7 @@ type ApplicationGraph() as this =
             queryEngine.AddVertices (cfg.SortedOffsets |> ResizeArray.map (fun offset -> getVertexByCodeLocation {offset = offset; method = methodBase}))
             cfgInfo
         else cfgInfo
-
+*)
     do
         messagesProcessor.Error.Add(fun e ->
             Logger.error $"Something wrong in application graph messages processor: \n %A{e} \n %s{e.Message} \n %s{e.StackTrace}"
@@ -439,9 +439,9 @@ type ApplicationGraph() as this =
         messagesProcessor.Post <| AddForkedStates (parentState,states)
 
     member this.MoveState (fromLocation : codeLocation) (toLocation : IGraphTrackableState) =
-        //messagesProcessor.Post <| MoveState (fromLocation, toLocation)
-        tryGetCfgInfo toLocation.CodeLocation.method |> ignore                            
-        moveState fromLocation toLocation
+        messagesProcessor.Post <| MoveState (fromLocation, toLocation)
+        //tryGetCfgInfo toLocation.CodeLocation.method |> ignore                            
+        //moveState fromLocation toLocation
 
     member x.AddGoal (location:codeLocation) =
         messagesProcessor.Post <| AddGoals [|location|]
