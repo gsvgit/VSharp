@@ -159,9 +159,6 @@ type CfgTemporaryData (methodBase : MethodBase) =
                     currentBasicBlock.FinalVertex <- currentVertex
                     addEdge currentBasicBlock.StartVertex currentVertex
                 | UnconditionalBranch target ->
-                    //currentBasicBlock.FinalVertex <- currentVertex
-                    //addEdge currentBasicBlock.StartVertex currentVertex
-                    //dealWithJump currentVertex target
                     currentBasicBlock.AddVertex target
                     dfs' currentBasicBlock target
                 | ConditionalBranch (fallThrough, offsets) ->
@@ -245,17 +242,6 @@ type private ApplicationGraphMessage =
         of AsyncReplyChannel<Dictionary<codeLocation,HashSet<codeLocation>>> * array<codeLocation>
     | GetDistanceToNearestGoal
         of AsyncReplyChannel<seq<IGraphTrackableState * int>> * seq<IGraphTrackableState>
-
-type private RangesComparer() =
-    interface IComparer<int<inputGraphVertex>*int<inputGraphVertex>> with
-        member this.Compare ((x1,x2),(y1,y2)) =
-            if (x1 <= y1 && x2 >= y2) || (y1 <= x1 && y2 >= x2)
-            then 0
-            elif x2 < y1
-            then -1
-            elif y2 < x1
-            then 1
-            else failwithf $"You can rty try to compare incomparable ranges: (%A{x1},%A{x2}) and (%A{y1},%A{y2})"
       
 type ApplicationGraph() as this =        
     let mutable firstFreeVertexId = 0<inputGraphVertex>
@@ -300,16 +286,11 @@ type ApplicationGraph() as this =
                 let targetVertex = codeLocationToVertex.[{method = methodBase; offset = targetOffset}]
                 queryEngine.AddCfgEdge <| Edge (srcVertex, targetVertex)        
             
-        cfgToFirstVertexIdMapping.Add(methodBase, firstFreeVertexId)        
-        //let nextFreeVertexIndex = firstFreeVertexId + cfg.ILBytes.Length * 1<inputGraphVertex>
-        //innerGraphVerticesToCodeLocationMap.Add((firstFreeVertexId, nextFreeVertexIndex - 1<inputGraphVertex>),(firstFreeVertexId, methodBase))
-        //firstFreeVertexId <- nextFreeVertexIndex
-        
+        cfgToFirstVertexIdMapping.Add(methodBase, firstFreeVertexId)
         cfg            
         
     let getCodeLocation (vertex:int<inputGraphVertex>) =
         let codeLocation = innerGraphVerticesToCodeLocationMap.[int vertex]
-        //{method = method; offset = int (vertex - firstVertexId)}
         codeLocation
                
     let addCallEdge (callSource:codeLocation) (callTarget:codeLocation) =   
@@ -443,18 +424,7 @@ type ApplicationGraph() as this =
                     | _ -> ()
         }            
     )
-    (*
-    let tryGetCfgInfo methodBase =
-        let exists,cfgInfo = cfgs.TryGetValue methodBase  
-        if not exists
-        then
-            let cfg = buildCFG methodBase
-            let cfgInfo = CfgInfo cfg
-            cfgs.Add(methodBase, cfgInfo)
-            queryEngine.AddVertices (cfg.SortedOffsets |> ResizeArray.map (fun offset -> getVertexByCodeLocation {offset = offset; method = methodBase}))
-            cfgInfo
-        else cfgInfo
-*)
+  
     do
         messagesProcessor.Error.Add(fun e ->
             Logger.error $"Something wrong in application graph messages processor: \n %A{e} \n %s{e.Message} \n %s{e.StackTrace}"
@@ -463,66 +433,38 @@ type ApplicationGraph() as this =
 
     member this.GetCfg (methodBase: MethodBase) =        
          messagesProcessor.PostAndReply (fun ch -> AddCFG (Some ch, methodBase))
-        //tryGetCfgInfo methodBase
             
     member this.RegisterMethod (methodBase: MethodBase) =            
         messagesProcessor.Post (AddCFG (None, methodBase))        
-        //tryGetCfgInfo methodBase |> ignore           
-    
+        
     member this.AddCallEdge (sourceLocation : codeLocation) (targetLocation : codeLocation) =        
         messagesProcessor.Post <| AddCallEdge (sourceLocation, targetLocation)
-        //tryGetCfgInfo sourceLocation.method |> ignore
-        //tryGetCfgInfo targetLocation.method |> ignore                       
-        //addCallEdge sourceLocation targetLocation
-        //toDot "cfg_prof.dot"
-
+        
     member this.AddState (state:IGraphTrackableState) =            
         messagesProcessor.Post <| AddStates [|state|]
-        //[|state|] |> addStates
         
     member this.AddStates (states:seq<IGraphTrackableState>) =            
         messagesProcessor.Post <| AddStates states
-        //Array.ofSeq states |> addStates
         
     member this.MoveState (fromLocation : codeLocation) (toLocation : IGraphTrackableState) =
         messagesProcessor.Post <| MoveState (fromLocation, toLocation)
-        //tryGetCfgInfo toLocation.CodeLocation.method |> ignore                            
-        //moveState fromLocation toLocation
-
+        
     member x.AddGoal (location:codeLocation) =
         messagesProcessor.Post <| AddGoals [|location|]
-        //[|location|]
-        //|> Array.map getVertexByCodeLocation 
-        //|> queryEngine.AddFinalVertices
-    
+        
     member x.AddGoals (locations:array<codeLocation>) =
         messagesProcessor.Post <| AddGoals locations
-        //locations
-        //|> Array.map getVertexByCodeLocation 
-        //|> queryEngine.AddFinalVertices
-    
+        
     member x.RemoveGoal (location:codeLocation) =
         messagesProcessor.Post <| RemoveGoal location
-        //getVertexByCodeLocation location
-        //|> queryEngine.RemoveFinalVertex
-    
+        
     member this.GetShortestDistancesToAllGoalsFromStates (states: array<codeLocation>) =
         messagesProcessor.PostAndReply (fun ch -> GetShortestDistancesToGoals(ch, states))
-        //ResizeArray<_>()
         
     member this.GetDistanceToNearestGoal (states: seq<IGraphTrackableState>) =
         messagesProcessor.PostAndReply (fun ch -> GetDistanceToNearestGoal(ch, states))
-        //let result =
-        //    states
-        //    |> Seq.choose (fun state ->
-        //        match queryEngine.GetDistanceToNearestGoal stateToStartVertex.[state] with
-        //        | Some (_,distance) -> Some (state, int distance)
-        //        | None -> None)
-        //result
             
     member this.GetGoalsReachableFromStates (states: array<codeLocation>) =            
         messagesProcessor.PostAndReply (fun ch -> GetReachableGoals(ch, states))
-        //Dictionary<_,_>()
-
 module CFG =
     let applicationGraph = ApplicationGraph()
