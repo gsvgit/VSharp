@@ -159,7 +159,7 @@ type GraphQueryEngine() as this =
         let startBox =
             RSMBox(
                 0<rsmState>,
-                HashSet [|0<rsmState>; 1<rsmState>|],
+                HashSet [|1<rsmState>|],
                 [|                    
                     yield RSMEdges.NonTerminalEdge(0<rsmState>, 2<rsmState>, 1<rsmState>)                    
                     for callSymbol in 2<terminalSymbol> .. 2<terminalSymbol> .. firstFreeCallTerminalId - 1<terminalSymbol> do
