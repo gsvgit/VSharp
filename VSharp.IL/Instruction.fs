@@ -129,11 +129,12 @@ module Instruction =
     let (|TailCall|_|) (opCode : OpCode) = if opCode = OpCodes.Tailcall then Some () else None
     let (|NewObj|_|) (opCode : OpCode) = if opCode = OpCodes.Newobj then Some () else None
 
-    let private methodBytesCache = System.Collections.Generic.Dictionary<MethodBase, byte [] * ExceptionHandlingClause []>()
+    type private ILCode = byte [] * ExceptionHandlingClause [] * VSharp.Concolic.ilInstr[]
+    let private methodBytesCache = System.Collections.Generic.Dictionary<MethodBase, ILCode>()
 
     let private rewriteMethodBytes (m : MethodBase) =
         let methodBody = m.GetMethodBody()
-        if methodBody = null then Array.empty, Array.empty
+        if methodBody = null then Array.empty, Array.empty, Array.empty
         else
             let ilBytes = methodBody.GetILAsByteArray()
             let methodModule = m.Module
@@ -160,25 +161,20 @@ module Instruction =
                     elif oldEH.Flags = ExceptionHandlingClauseOptions.Fault || oldEH.Flags = ExceptionHandlingClauseOptions.Finally then Finally
                     else Catch oldEH.CatchType
                 {tryOffset = int eh.tryOffset; tryLength = int eh.tryLength; handlerOffset = int eh.handlerOffset; handlerLength = int eh.handlerLength; ehcType = ehcType }
-            result.il, Array.map parseEH result.ehs
+            result.il, Array.map parseEH result.ehs, rewriter.CopyInstructions()
 
-    let getILBytes (m : MethodBase) : byte [] =
-        let result : ref<byte [] * ExceptionHandlingClause []> = ref (null, null)
-        if methodBytesCache.TryGetValue(m, result) then fst result.Value
+    let private getILCode (m : MethodBase) =
+        let result : ref<ILCode> = ref (null, null, null)
+        if methodBytesCache.TryGetValue(m, result) then result.Value
         else
-            let ilBytes = rewriteMethodBytes m
-            assert(ilBytes <> (null, null))
-            methodBytesCache.Add(m, ilBytes)
-            fst ilBytes
+            let ilBytes, ehs, parsed as code = rewriteMethodBytes m
+            assert(ilBytes <> null && ehs <> null && parsed <> null)
+            methodBytesCache.Add(m, code)
+            code
 
-    let getEHSBytes (m : MethodBase) =
-        let result : ref<byte [] * ExceptionHandlingClause []> = ref (null, null)
-        if methodBytesCache.TryGetValue(m, result) then snd result.Value
-        else
-            let ilBytes = rewriteMethodBytes m
-            assert(ilBytes <> (null, null))
-            methodBytesCache.Add(m, ilBytes)
-            snd ilBytes
+    let getILBytes : MethodBase -> byte[] = getILCode >> fst3
+    let getEHSBytes : MethodBase -> ExceptionHandlingClause[] = getILCode >> snd3
+    let getParsedIL : MethodBase -> VSharp.Concolic.ilInstr[] = getILCode >> thd3
 
     let parseInstruction (m : MethodBase) pos =
         let ilBytes : byte [] = getILBytes m

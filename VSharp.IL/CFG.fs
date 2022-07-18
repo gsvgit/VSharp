@@ -11,6 +11,7 @@ open CFPQ_GLL.RSM
 open CFPQ_GLL.SPPF
 open FSharpx.Collections
 open VSharp
+open VSharp.Concolic
 open VSharp.Core
 
 type IGraphTrackableState =
@@ -201,20 +202,23 @@ type CfgTemporaryData (methodBase : MethodBase) =
     member this.LoopEntries = loopEntries
 
 type CfgInfo (cfg:CfgTemporaryData) =
-    let resolveBasicBlock offset =
+    let resolveBasicBlockIndex offset =
         let rec binSearch (sortedOffsets : List<offset>) offset l r =
-            if l >= r then sortedOffsets.[l]
+            if l >= r then l
             else
                 let mid = (l + r) / 2
                 let midValue = sortedOffsets.[mid]
-                if midValue = offset
-                then midValue
-                elif midValue < offset
-                then binSearch sortedOffsets offset (mid + 1) r
-                else binSearch sortedOffsets offset l (mid - 1)
-    
+                let leftIsLefter = midValue <= offset
+                let rightIsRighter = mid + 1 >= sortedOffsets.Count || sortedOffsets.[mid + 1] > offset
+                if leftIsLefter && rightIsRighter then mid
+                elif not rightIsRighter
+                    then binSearch sortedOffsets offset (mid + 1) r
+                    else binSearch sortedOffsets offset l (mid - 1)
+
         binSearch cfg.SortedOffsets offset 0 (cfg.SortedOffsets.Count - 1)
-    
+
+    let resolveBasicBlock offset = cfg.SortedOffsets.[resolveBasicBlockIndex offset]
+
     let sinks = cfg.Sinks |> Array.map resolveBasicBlock
     let loopEntries = cfg.LoopEntries   
     let calls =
@@ -226,17 +230,36 @@ type CfgInfo (cfg:CfgTemporaryData) =
     member this.MethodBase = cfg.MethodBase
     member this.IlBytes = cfg.ILBytes
     member this.SortedOffsets = cfg.SortedOffsets
-    member this.Sinks = sinks 
+    member this.Edges = cfg.Edges
+    member this.Sinks = sinks
     member this.Calls = calls
     member this.IsLoopEntry offset = loopEntries.Contains offset
-    member this.ResolveBasicBlock offset =
-        resolveBasicBlock offset
+    member this.ResolveBasicBlock offset = resolveBasicBlock offset
+
+    // Returns a sequence of strings, one per instruction in basic block
+    member this.BasicBlockToString (offset : offset) : string seq =
+        let idx = resolveBasicBlockIndex offset
+        let offset = cfg.SortedOffsets.[idx]
+        let parsedInstrs = Instruction.getParsedIL cfg.MethodBase
+        let mutable instr = parsedInstrs |> Array.find (fun instr -> int instr.offset = offset)
+        let endInstr =
+            if idx + 1 < cfg.SortedOffsets.Count then
+                let nextBBOffset = cfg.SortedOffsets.[idx + 1]
+                parsedInstrs |> Array.find (fun instr -> int instr.offset = nextBBOffset)
+            else parsedInstrs.[parsedInstrs.Length - 1].next
+        seq {
+            while not <| LanguagePrimitives.PhysicalEquality instr endInstr do
+                yield ILRewriter.PrintILInstr None None cfg.MethodBase instr
+                instr <- instr.next
+        }
+
+
 
 type private ApplicationGraphMessage =
     | AddGoals of array<codeLocation>
     | RemoveGoal of codeLocation
     | AddStates of seq<IGraphTrackableState>
-    | MoveState of positionForm:codeLocation * positionTo: IGraphTrackableState
+    | MoveState of positionFrom: codeLocation * positionTo: IGraphTrackableState * forks: IGraphTrackableState seq
     | AddCFG of Option<AsyncReplyChannel<CfgInfo>> *  MethodBase
     | AddCallEdge of callForm:codeLocation * callTo: codeLocation
     | GetShortestDistancesToGoals
@@ -256,8 +279,19 @@ type private RangesComparer() =
             elif y2 < x1
             then 1
             else failwithf $"You can rty try to compare incomparable ranges: (%A{x1},%A{x2}) and (%A{y1},%A{y2})"
-      
-type ApplicationGraph() as this =        
+
+type IVisualizer =
+    abstract AddMarker : codeLocation -> unit
+    abstract VisualizeGraph : unit -> unit
+    abstract VisualizeStep : codeLocation -> codeLocation -> codeLocation seq -> unit
+
+type NullVisualizer() =
+    interface IVisualizer with
+        override x.AddMarker _ = ()
+        override x.VisualizeGraph () = ()
+        override x.VisualizeStep _ _ _ = ()
+
+type ApplicationGraph() as this =
     let mutable firstFreeVertexId = 0<inputGraphVertex>
     let cfgToFirstVertexIdMapping = Dictionary<MethodBase,int<inputGraphVertex>>()    
     let goalsInInnerGraph = ResizeArray<_>()
@@ -267,23 +301,14 @@ type ApplicationGraph() as this =
     let innerGraphVerticesToCodeLocationMap = ResizeArray<_>() //SortedDictionary<_,_>(comparer = RangesComparer())
     let existingCalls = HashSet<codeLocation*codeLocation>()
     let queryEngine = GraphQueryEngine()
-    let codeLocationToVertex = Dictionary<codeLocation, int<inputGraphVertex>>()        
-    let getVertexByCodeLocation (pos:codeLocation) =
-            codeLocationToVertex.[{pos with offset = cfgs.[pos.method].ResolveBasicBlock pos.offset}]
-        
-    let toDot filePath =
-        let clusters = 
-            seq{
-                for kvp in cfgs do
-                    let clusterName = kvp.Value.MethodBase.Name
-                    let vertices =                     
-                        kvp.Value.SortedOffsets
-                        |> Seq.map (fun vertex -> getVertexByCodeLocation  {method = kvp.Value.MethodBase; offset = vertex})
-                    yield Cluster(clusterName, vertices)
-                }
-    
-        queryEngine.ToDot(clusters, filePath)
-                
+    let codeLocationToVertex = Dictionary<codeLocation, int<inputGraphVertex>>()
+    let resolveCodeLocation (pos : codeLocation) =
+        {pos with offset = cfgs.[pos.method].ResolveBasicBlock pos.offset}
+    let getVertexByCodeLocation (pos : codeLocation) =
+        codeLocationToVertex.[resolveCodeLocation pos]
+
+    let mutable visualizer : IVisualizer = NullVisualizer()
+
     let buildCFG (methodBase:MethodBase) =
         Logger.trace $"Add CFG for %A{methodBase.Name}."
         let cfg = CfgTemporaryData(methodBase)
@@ -311,12 +336,12 @@ type ApplicationGraph() as this =
         let codeLocation = innerGraphVerticesToCodeLocationMap.[int vertex]
         //{method = method; offset = int (vertex - firstVertexId)}
         codeLocation
-               
-    let addCallEdge (callSource:codeLocation) (callTarget:codeLocation) =   
+
+    let addCallEdge (callSource:codeLocation) (callTarget:codeLocation) =
         let callerMethodCfgInfo = cfgs.[callSource.method]
         let calledMethodCfgInfo = cfgs.[callTarget.method]
         let callFrom = getVertexByCodeLocation callSource
-        let callTo = getVertexByCodeLocation callTarget                    
+        let callTo = getVertexByCodeLocation callTarget
 
         if not <| existingCalls.Contains (callSource, callTarget)
         then
@@ -339,44 +364,51 @@ type ApplicationGraph() as this =
                 |> Array.map(fun sink -> getVertexByCodeLocation {callTarget with offset = sink})
                 |> Array.map (fun returnFrom -> Edge(returnFrom, returnTo))
             queryEngine.AddCallReturnEdges (callEdge, returnEdges)            
-        
-    let moveState (initialPosition: codeLocation) (stateWithNewPosition: IGraphTrackableState) =        
-        let initialVertexInInnerGraph = getVertexByCodeLocation initialPosition            
-        let finalVertexInnerGraph = getVertexByCodeLocation stateWithNewPosition.CodeLocation 
-        if initialVertexInInnerGraph <> finalVertexInnerGraph
+
+    let addStartVertex (state : IGraphTrackableState) =
+        let resolvedLocation = resolveCodeLocation state.CodeLocation
+        let startVertex = StartVertex (codeLocationToVertex.[resolvedLocation], [])
+        if not <| stateToStartVertex.ContainsKey state then
+            stateToStartVertex.Add(state, startVertex)
+        let exists, states = startVertexToStates.TryGetValue startVertex
+        if exists
         then
-            let startVertex = StartVertex(getVertexByCodeLocation stateWithNewPosition.CodeLocation, [])
+            let added = states.Add state
+            assert added
+        else startVertexToStates.Add(startVertex, HashSet<_>[|state|])
+        startVertex, resolvedLocation
+
+    let moveState (initialPosition: codeLocation) (stateWithNewPosition: IGraphTrackableState) (forks: IGraphTrackableState seq) =
+        let resolvedInitialPosition = resolveCodeLocation initialPosition
+        let initialVertexInInnerGraph = codeLocationToVertex.[resolvedInitialPosition]
+        let resolvedFinalPosition = resolveCodeLocation stateWithNewPosition.CodeLocation
+        let finalVertexInnerGraph = codeLocationToVertex.[resolvedFinalPosition]
+        let transitedToAnotherBlock = initialVertexInInnerGraph <> finalVertexInnerGraph
+        if transitedToAnotherBlock
+        then
+            let startVertex, _ = addStartVertex stateWithNewPosition
             let previousStartVertex = stateToStartVertex.[stateWithNewPosition]
-            let exists, states = startVertexToStates.TryGetValue startVertex
-            if exists
-            then
-                let added = states.Add stateWithNewPosition
-                assert added
-            else startVertexToStates.Add(startVertex, HashSet<_>[|stateWithNewPosition|])
             stateToStartVertex.[stateWithNewPosition] <- startVertex
             let removed = startVertexToStates.[previousStartVertex].Remove stateWithNewPosition
             assert removed
             queryEngine.AddStartVertex startVertex
             if startVertexToStates.[previousStartVertex].Count = 0
-            then queryEngine.RemoveStartVertex previousStartVertex 
-            
+            then queryEngine.RemoveStartVertex previousStartVertex
+        let forkedStartVerticesAndResolvedLocations = forks |> Seq.map addStartVertex |> Seq.cache
+        let forkedStartVertices = forkedStartVerticesAndResolvedLocations |> Seq.map fst |> Array.ofSeq
+        queryEngine.AddStartVertices forkedStartVertices
+        if transitedToAnotherBlock || not <| Array.isEmpty forkedStartVertices then
+            visualizer.VisualizeStep resolvedInitialPosition resolvedFinalPosition (forkedStartVerticesAndResolvedLocations |> Seq.map snd)
+
     let addStates (states:array<IGraphTrackableState>) =
-        let startVertices =
-            states
-            |> Array.map (fun state ->
-                let startVertex = StartVertex (getVertexByCodeLocation state.CodeLocation, [])
-                stateToStartVertex.Add(state, startVertex)
-                let exists, states = startVertexToStates.TryGetValue startVertex
-                if exists
-                then
-                    let added = states.Add state
-                    assert added
-                else startVertexToStates.Add(startVertex, HashSet<_>[|state|])                    
-                startVertex)
-            
+        let startVertices = states |> Array.map (fun state ->
+            let startVertex, resolvedLocation = addStartVertex state
+            visualizer.AddMarker resolvedLocation
+            startVertex)
         queryEngine.AddStartVertices startVertices
-    
-    let getShortestDistancesToGoals (states:array<codeLocation>) = 
+        visualizer.VisualizeGraph()
+
+    let getShortestDistancesToGoals (states:array<codeLocation>) =
         states
         |> Array.choose (fun state -> None)
             //let exists, distances = knownDistances.TryGetValue (codeLocationToVertex state)
@@ -412,7 +444,6 @@ type ApplicationGraph() as this =
                         tryGetCfgInfo _from.method |> ignore
                         tryGetCfgInfo _to.method |> ignore                       
                         addCallEdge _from _to
-                        //toDot "cfg.dot"
                     | AddGoals positions ->
                         positions
                         |> Array.map getVertexByCodeLocation 
@@ -421,9 +452,9 @@ type ApplicationGraph() as this =
                         getVertexByCodeLocation pos
                         |> queryEngine.RemoveFinalVertex
                     | AddStates states -> Array.ofSeq states |> addStates 
-                    | MoveState (_from,_to) ->
+                    | MoveState(_from, _to, _forks) ->
                         tryGetCfgInfo _to.CodeLocation.method |> ignore                            
-                        moveState _from _to
+                        moveState _from _to _forks |> ignore
                     | GetShortestDistancesToGoals (replyChannel, states) ->
                         replyChannel.Reply (getShortestDistancesToGoals states)
                     | GetDistanceToNearestGoal (replyChannel, states) ->
@@ -484,8 +515,8 @@ type ApplicationGraph() as this =
         messagesProcessor.Post <| AddStates states
         //Array.ofSeq states |> addStates
         
-    member this.MoveState (fromLocation : codeLocation) (toLocation : IGraphTrackableState) =
-        messagesProcessor.Post <| MoveState (fromLocation, toLocation)
+    member this.MoveState (fromLocation : codeLocation) (toLocation : IGraphTrackableState) (forks : seq<IGraphTrackableState>) =
+        messagesProcessor.Post <| MoveState (fromLocation, toLocation, forks)
         //tryGetCfgInfo toLocation.CodeLocation.method |> ignore                            
         //moveState fromLocation toLocation
 
@@ -523,6 +554,11 @@ type ApplicationGraph() as this =
     member this.GetGoalsReachableFromStates (states: array<codeLocation>) =            
         messagesProcessor.PostAndReply (fun ch -> GetReachableGoals(ch, states))
         //Dictionary<_,_>()
+
+    member this.CFGs with get() = cfgs.Values :> seq<CfgInfo>
+
+    member this.SetVisualizer (v : IVisualizer) =
+        visualizer <- v
 
 module CFG =
     let applicationGraph = ApplicationGraph()

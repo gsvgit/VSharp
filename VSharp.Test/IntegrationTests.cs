@@ -91,9 +91,14 @@ namespace VSharp.Test
                 var methodInfo = innerCommand.Test.Method.MethodInfo;
                 try
                 {
-                    _options = new SiliOptions(explorationMode.NewTestCoverageMode(coverageZone.MethodZone, searchMode.DFSMode), _executionMode, _maxBoundForTest);
-                    SILI explorer = new SILI(_options);
                     UnitTests unitTests = new UnitTests(Directory.GetCurrentDirectory());
+                    _options = new SiliOptions(
+                        explorationMode.NewTestCoverageMode(coverageZone.MethodZone, searchMode.DFSMode),
+                        _executionMode,
+                        unitTests.TestDirectory,
+                        _maxBoundForTest,
+                        false);
+                    SILI explorer = new SILI(_options);
 
                     explorer.InterpretIsolated(methodInfo, unitTests.GenerateTest, unitTests.GenerateError, _ => { }, e => throw e);
 

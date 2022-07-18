@@ -13,6 +13,7 @@
       <Compile Include="GraphQueryEngine.fs" />
       <Compile Include="CFG.fs" />
       <Compile Include="Coverage.fs" />
+      <Compile Include="DotVisualizer.fs" />
     </ItemGroup>
 
     <ItemGroup>

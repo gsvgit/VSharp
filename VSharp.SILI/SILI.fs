@@ -30,6 +30,10 @@ type public SILI(options : SiliOptions) =
     let mutable reportInternalFail : Exception -> unit = fun _ -> internalfail "reporter not configured!"
     let concolicPools = Dictionary<MethodBase, ConcolicPool>()
 
+    let () =
+        if options.visualize then
+            DotVisualizer(CFG.applicationGraph, options.outputDirectory) :> IVisualizer |> CFG.applicationGraph.SetVisualizer
+
     let isSat pc =
         // TODO: consider trivial cases
         emptyState.pc <- pc
@@ -136,12 +140,11 @@ type public SILI(options : SiliOptions) =
                 pool.Value.StepDone(s, s::newStates)
             | _ -> ()
             let loc' = s.currentLoc
-            CFG.applicationGraph.MoveState loc s
+            CFG.applicationGraph.MoveState loc s (Seq.cast<_> newStates)
             let locationsForQuery = ResizeArray<_>([|loc'|])
             newStates |> Seq.iter (fun newState ->
                 let loc = currentLoc newState
-                locationsForQuery.Add loc
-                CFG.applicationGraph.AddState newState)
+                locationsForQuery.Add loc)
             let distances = CFG.applicationGraph.GetDistanceToNearestGoal(Seq.cast<_> (s::newStates))
             Logger.trace $"Distances to nearest goals: %A{Array.ofSeq distances |> Array. map snd}"
             searcher.UpdateStates s newStates

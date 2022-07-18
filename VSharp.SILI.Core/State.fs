@@ -11,6 +11,7 @@ type typeVariables = mappedStack<typeId, symbolicType> * typeId list stack
 
 type stackBufferKey = concreteHeapAddress
 
+// TODO: alias int<measure>?
 type offset = int
 
 // last fields are determined by above fields

@@ -74,11 +74,15 @@ namespace VSharp
         private static Statistics StartExploration(List<MethodBase> methods, string resultsFolder, string[] mainArguments = null)
         {
             var maxBound = 15u;
-            var options =
-                new SiliOptions(explorationMode.NewTestCoverageMode(coverageZone.MethodZone, searchMode.DFSMode),
-                    executionMode.SymbolicMode, maxBound);
-            SILI explorer = new SILI(options);
             UnitTests unitTests = new UnitTests(resultsFolder);
+            var options =
+                new SiliOptions(
+                    explorationMode.NewTestCoverageMode(coverageZone.MethodZone, searchMode.DFSMode),
+                    executionMode.SymbolicMode,
+                    unitTests.TestDirectory,
+                    maxBound,
+                    false);
+            SILI explorer = new SILI(options);
             Core.API.ConfigureSolver(SolverPool.mkSolver());
             foreach (var method in methods)
             {

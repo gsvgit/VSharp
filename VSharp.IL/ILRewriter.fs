@@ -4,6 +4,7 @@ open System
 open System.Reflection.Emit
 open System.Runtime.CompilerServices
 open VSharp
+open VSharp.Concolic
 
 type evaluationStackCellType =
     | I1 = 0
@@ -598,7 +599,7 @@ type ILRewriter(body : rawMethodBody) =
     let adjustState (instr : ilInstr) =
         maxStackSize <- maxStackSize + instr.opcode.StackBehaviourPush
 
-    member x.ILInstrToString (probes : probes) (instr : ilInstr) =
+    static member PrintILInstr (tokens : signatureTokens option) (probes : probes option) (m : System.Reflection.MethodBase) (instr : ilInstr) =
         let opcode, arg =
             match instr.opcode with
             | OpCode op ->
@@ -610,14 +611,19 @@ type ILRewriter(body : rawMethodBody) =
                             sprintf "%s [%x]" (Reflection.methodToString callee) token
                         | _ -> __unreachable__()
                     elif op = OpCodes.Calli then
-                        body.tokens.TokenToString instr.Arg32
+                        match tokens with
+                        | Some tokens -> tokens.TokenToString instr.Arg32
+                        | None -> instr.Arg32.ToString()
                     else
                         match instr.arg with
                         | NoArg -> ""
                         | Arg8 a -> a.ToString()
                         | Arg16 a -> a.ToString()
                         | Arg32 a -> a.ToString()
-                        | Arg64 a -> probes.AddressToString a
+                        | Arg64 a ->
+                            match probes with
+                            | Some probes -> probes.AddressToString a
+                            | None -> a.ToString()
                         | Target t ->
                             match t.opcode with
                             | OpCode op -> sprintf "(%x) %s" t.offset op.Name
@@ -625,6 +631,9 @@ type ILRewriter(body : rawMethodBody) =
                 op.Name, arg
             | SwitchArg -> "<SwitchArg>", ""
         sprintf "[%x] %s %s" instr.offset opcode arg
+
+    member x.ILInstrToString (probes : probes) (instr : ilInstr) =
+        ILRewriter.PrintILInstr (Some body.tokens) (Some probes) m instr
 
     member x.InstrEq instr1 instr2 =
         Microsoft.FSharp.Core.LanguagePrimitives.PhysicalEquality instr1 instr2

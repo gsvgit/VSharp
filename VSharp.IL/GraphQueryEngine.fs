@@ -66,12 +66,6 @@ type StartVertex =
     new (vertex, callHistory) = {Vertex = vertex; CallHistory = callHistory}
 
 [<Struct>]
-type Cluster =
-    val Name: string
-    val Vertices: seq<int<inputGraphVertex>>
-    new (name, vertices) = {Name = name; Vertices = vertices}
-
-[<Struct>]
 type Edge =
     val StartVertex: int<inputGraphVertex>
     val FinalVertex: int<inputGraphVertex>
@@ -303,28 +297,3 @@ type GraphQueryEngine() as this =
         
     member this.GetDistanceToNearestGoal startVertex =
         distancesCache.[startVertex].GetNearestVertex()
-    
-    member this.ToDot (clusters, filePath) =
-        let subgraphs =
-            seq{
-                for cluster:Cluster in clusters do
-                    yield $"subgraph cluster_%s{cluster.Name} {{"
-                    yield $"label=%A{cluster.Name}"                    
-                    for vertex in cluster.Vertices do
-                        yield string vertex
-                    yield "}"  
-            }
-                       
-        let content =
-            seq{
-               yield "digraph G"
-               yield "{"
-               yield "node [shape = plaintext]"
-               yield! subgraphs
-               for kvp in vertices do
-                for e in kvp.Value do
-                    yield $"%i{kvp.Key} -> %i{e.TargetVertex} [label=%A{e.TerminalSymbol}]"
-               yield "}"
-            }
-        
-        System.IO.File.WriteAllLines(filePath, content)

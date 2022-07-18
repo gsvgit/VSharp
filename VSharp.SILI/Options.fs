@@ -1,6 +1,7 @@
 ﻿namespace VSharp.Interpreter.IL
 
 open System.Diagnostics
+open System.IO
 
 type searchMode =
     | DFSMode
@@ -19,5 +20,10 @@ type executionMode =
     | ConcolicMode
     | SymbolicMode
 
-type SiliOptions =
-    {explorationMode : explorationMode; executionMode : executionMode; bound : uint32}
+type SiliOptions = {
+    explorationMode : explorationMode
+    executionMode : executionMode
+    outputDirectory : DirectoryInfo
+    bound : uint32
+    visualize : bool
+}
