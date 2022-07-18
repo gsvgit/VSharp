@@ -146,8 +146,9 @@ type internal CfgTemporaryData (method : MethodWithBody) =
                     currentBasicBlock.FinalVertex <- currentVertex
                     addEdge currentBasicBlock.StartVertex currentVertex
                 | UnconditionalBranch target ->
-                    currentBasicBlock.AddVertex target
-                    dfs' currentBasicBlock target
+                    currentBasicBlock.FinalVertex <- currentVertex
+                    addEdge currentBasicBlock.StartVertex currentVertex
+                    dealWithJump currentVertex target
                 | ConditionalBranch (fallThrough, offsets) ->
                     currentBasicBlock.FinalVertex <- currentVertex
                     addEdge currentBasicBlock.StartVertex currentVertex

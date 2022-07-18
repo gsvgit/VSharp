@@ -1,7 +1,6 @@
 namespace VSharp
 
 open System.Collections.Generic
-open CFPQ_GLL
 open CFPQ_GLL.GLL
 open CFPQ_GLL.GSS
 open CFPQ_GLL.InputGraph
@@ -77,57 +76,28 @@ type Edge =
     val FinalVertex: int<inputGraphVertex>
     new (startVertex, finalVertex) = {StartVertex = startVertex; FinalVertex = finalVertex}
     
-type private CfpqState (query) =
+type private CfpqState (terminalForCFGEdge, firstFreeCallTerminalId) =
     let mutable gss = GSS()    
-    let mutable matchedRanges = MatchedRanges query
-    let mutable computedDistances = Dictionary<MatchedRange,int>()
-    let mutable matchedRangesToTypes = Dictionary<MatchedRange, ResizeArray<RangeType>>()
+    let mutable matchedRanges = MatchedRanges ()
+    let computedDistances = Dictionary<MatchedRange,int>()    
     let reachableVertices = Dictionary<int<inputGraphVertex>,HashSet<int<inputGraphVertex>>>()
-    let mutable query = query
+    let historyToQuery = Dictionary<list<int<terminalSymbol>>,RSM>()
+    let mutable firstFreeRsmState = 3<rsmState>
+    let mutable _balancedBracketsBox = Unchecked.defaultof<RSMBox>
+    let mutable _baseQueryStartBox = Unchecked.defaultof<RSMBox>
     
-    member this.GSS 
-        with get () = gss        
-    member this.MatchedRanges
-        with get () = matchedRanges        
-    member this.ReachableVertices
-        with get () = reachableVertices
-    member this.Query = query
-    member this.MatchedRangesToTypes
-        with get () = matchedRangesToTypes
-        and set v = matchedRangesToTypes <- v
-    member this.ComputedDistances
-        with get () = computedDistances        
-    
-    member this.Reset newQuery =
-        gss <- GSS()
-        matchedRanges <- MatchedRanges newQuery
-        query <- newQuery
-        matchedRangesToTypes.Clear()
-        reachableVertices.Clear()
-        computedDistances.Clear()
-        
-
-type GraphQueryEngine() as this =
-    let vertices = Dictionary<int<inputGraphVertex>,ResizeArray<InputGraphEdge>>()
-    let terminalForCFGEdge = 0<terminalSymbol>
-    let mutable firstFreeCallTerminalId = 1<terminalSymbol>
-    let finalVertices = ResizeArray<int<inputGraphVertex>>()
-    let startVertices = HashSet<StartVertex>()    
-    let distancesCache = Dictionary<StartVertex,DistancesStorage>()
-   
-    let buildQuery () =
+    let buildQuery firstFreeCallTerminalId =
         let startBox =
             RSMBox(
                 0<rsmState>,
                 HashSet [|1<rsmState>|],
                 [|                    
                     yield RSMEdges.NonTerminalEdge(0<rsmState>, 2<rsmState>, 1<rsmState>)                    
-                    for callSymbol in 2<terminalSymbol> .. 2<terminalSymbol> .. firstFreeCallTerminalId - 1<terminalSymbol> do
+                    for callSymbol in 1<terminalSymbol> .. 2<terminalSymbol> .. firstFreeCallTerminalId - 1<terminalSymbol> do
                       yield RSMEdges.TerminalEdge(1<rsmState>, callSymbol, 0<rsmState>)
                 |]
                 )
-        let balancedBracketsBox =
-          let mutable firstFreeRsmState = 3<rsmState>
+        let balancedBracketsBox =          
           RSMBox(
               2<rsmState>,
               HashSet [|2<rsmState>|],
@@ -139,14 +109,72 @@ type GraphQueryEngine() as this =
                       yield RSMEdges.TerminalEdge(firstFreeRsmState + 1<rsmState>, callSymbol + 1<terminalSymbol>, 2<rsmState>)                  
                       firstFreeRsmState <- firstFreeRsmState + 2<rsmState>
           |])
+        _balancedBracketsBox <- balancedBracketsBox
+        _baseQueryStartBox <- startBox
         RSM([|startBox; balancedBracketsBox|], startBox)
     
-    let cfpqState = CfpqState(buildQuery())
+    let mutable baseQuery = buildQuery firstFreeCallTerminalId
     
-    let addReachabilityInfo (startVertices:seq<StartVertex>) =        
+    
+    let buildQueryWithHistory history =
+        let exists, query = historyToQuery.TryGetValue history
+        if exists
+        then query
+        else
+            let startBox =
+                RSMBox (
+                    firstFreeRsmState,
+                    HashSet<_>([|for i in 1 .. history.Length + 2 -> firstFreeRsmState + i * 1<rsmState>|]),
+                    [|
+                        yield RSMEdges.NonTerminalEdge(firstFreeRsmState, 0<rsmState>, firstFreeRsmState + 1<rsmState>)
+                        yield RSMEdges.NonTerminalEdge(firstFreeRsmState, 2<rsmState>, firstFreeRsmState + 2<rsmState>)
+                        firstFreeRsmState <- firstFreeRsmState + 2<rsmState>
+                        for h in history do
+                            yield RSMEdges.TerminalEdge(firstFreeRsmState, h + 1<terminalSymbol>, firstFreeRsmState + 1<rsmState>)
+                            yield RSMEdges.NonTerminalEdge(firstFreeRsmState + 1<rsmState>, 2<rsmState>, firstFreeRsmState + 2<rsmState>)
+                            firstFreeRsmState <- firstFreeRsmState + 2<rsmState>
+                    |]                    
+                    )
+            let rsm = RSM([|startBox; _balancedBracketsBox; _baseQueryStartBox|], startBox)
+            historyToQuery.Add (history, rsm)
+            //rsm.ToDot "rsm.dot"
+            rsm
+    
+    member this.GSS 
+        with get () = gss        
+    member this.MatchedRanges
+        with get () = matchedRanges        
+    member this.ReachableVertices
+        with get () = reachableVertices
+    member this.BaseQuery = baseQuery
+    member this.HistoryToQuery = historyToQuery
+    member this.ComputedDistances
+        with get () = computedDistances    
+    member this.BuildQueryWithHistory history = buildQueryWithHistory history    
+    member this.Reset firstFreeCallTerminalId =
+        Logger.trace $"CFQP cache info: historyToQuery: %i{historyToQuery.Count}, computedDistances: %i{computedDistances.Count}"
+        firstFreeRsmState <- 3<rsmState>
+        baseQuery <- buildQuery firstFreeCallTerminalId        
+        gss <- GSS()
+        matchedRanges <- MatchedRanges ()
+        historyToQuery.Clear()
+        reachableVertices.Clear()
+        computedDistances.Clear()
+        
+
+type GraphQueryEngine() as this =
+    let vertices = Dictionary<int<inputGraphVertex>,ResizeArray<InputGraphEdge>>()
+    let terminalForCFGEdge = 0<terminalSymbol>
+    let mutable firstFreeCallTerminalId = 1<terminalSymbol>
+    let finalVertices = ResizeArray<int<inputGraphVertex>>()
+    let startVertices = HashSet<StartVertex>()    
+    let distancesCache = Dictionary<StartVertex,DistancesStorage>()
+    let callEdgeToCallTerminal = Dictionary<Edge,int<terminalSymbol>>()
+    let cfpqState = CfpqState(terminalForCFGEdge, firstFreeCallTerminalId)
+    
+    let addReachabilityInfo (startVertices:HashSet<StartVertex>) =        
         if Seq.length startVertices > 0
-        then
-            //Logger.trace $"GLL started. Vertices in graph: %i{vertices.Count}. Start vertices: %A{Array.ofSeq startVertices |> Array.map (fun v -> v.Vertex)}."
+        then            
             Logger.trace $"GLL started. Vertices in graph: %i{vertices.Count}. Start vertices count: %A{Seq.length startVertices}."
             let startGLL = System.DateTime.Now
             for vertex in startVertices do
@@ -155,32 +183,24 @@ type GraphQueryEngine() as this =
                     let distances = DistancesStorage()                
                     distancesCache.Add(vertex, distances)
                     
-            //TODO Handle history
-            let startVertices =
-                startVertices
-                |> Seq.map (fun (v:StartVertex) -> v.Vertex)
-                |> HashSet<_>
-                
-            let res = evalFromState cfpqState.ReachableVertices cfpqState.GSS cfpqState.MatchedRanges this startVertices cfpqState.Query Mode.AllPaths
-                //GLL.eval this startVertices cfpqState.Query Mode.AllPaths
-            let endGll = System.DateTime.Now
-            match res with
-            | QueryResult.ReachabilityFacts _ ->
-                failwith "Impossible!"
-            | QueryResult.MatchedRanges ranges -> ()
-                //cfpqState.MatchedRangesToTypes <- ranges.GetRangesToTypes()
-            let rangesConversionEnd = System.DateTime.Now
-            Logger.trace $"GLL finished. GLL running time: %A{(endGll - startGLL).TotalMilliseconds} ms. Ranges conversion time: %A{(rangesConversionEnd - endGll).TotalMilliseconds} ms."
-        
-    let updateDistances startVertices finalVertices =
-        //TODO Handle history
-        let startVertices = startVertices |> Seq.map (fun (v:StartVertex) -> v.Vertex)
-        let distances =
-            cfpqState.MatchedRanges.GetShortestDistances(cfpqState.ComputedDistances, startVertices, finalVertices)
-        for _from,_to,distance in distances do
-            match distance with            
-            | Reachable d -> distancesCache.[StartVertex(_from,[])].AddOrUpdate(_to, d*1<distance>) //TODO Handle history
-            | Unreachable -> ()
+            startVertices
+            |> Seq.iter (fun (v:StartVertex) ->
+                evalFromState cfpqState.ReachableVertices cfpqState.GSS cfpqState.MatchedRanges this (HashSet<_>[|v.Vertex|]) (cfpqState.BuildQueryWithHistory v.CallHistory) Mode.AllPaths
+                |> ignore )
+
+            Logger.trace $"GLL finished. GLL running time: %A{(System.DateTime.Now - startGLL).TotalMilliseconds} ms."            
+            
+    let updateDistances startVertices finalVertices =        
+        startVertices
+        |> Seq.iter (fun (v:StartVertex) -> 
+            let distances =
+                //Logger.trace $"Original final states: %A{cfpqState.HistoryToQuery.[v.CallHistory].OriginalFinalStates}"
+                cfpqState.MatchedRanges.GetShortestDistances(cfpqState.HistoryToQuery.[v.CallHistory], cfpqState.ComputedDistances, [|v.Vertex|], finalVertices)
+            for _from,_to,distance in distances do
+                match distance with            
+                | Reachable d -> distancesCache.[v].AddOrUpdate(_to, d * 1<distance>)
+                | Unreachable -> ()
+        )
         
     let addCfgEdge (edge:Edge) =
         let exists, outgoingEdges = vertices.TryGetValue edge.StartVertex
@@ -201,7 +221,7 @@ type GraphQueryEngine() as this =
         let verticesToUpdate = vertices |> Array.filter (fun v -> not <| distancesCache.ContainsKey v)
         if verticesToUpdate.Length > 0
         then 
-            addReachabilityInfo verticesToUpdate
+            addReachabilityInfo (HashSet<_> verticesToUpdate)
             updateDistances verticesToUpdate finalVertices
         
     let addFinalVertices (vertices:seq<int<inputGraphVertex>>) =
@@ -235,15 +255,15 @@ type GraphQueryEngine() as this =
         InputGraphEdge(firstFreeCallTerminalId, callEdge.FinalVertex)
         |> vertices.[callEdge.StartVertex].Add
         
-        for edge:Edge in returnEdges do
+        callEdgeToCallTerminal.Add(callEdge, firstFreeCallTerminalId)
+        
+        for edge:Edge in returnEdges do    
             InputGraphEdge(firstFreeCallTerminalId + 1<terminalSymbol>, edge.FinalVertex)
             |> vertices.[edge.StartVertex].Add
             
         firstFreeCallTerminalId <- firstFreeCallTerminalId + 2<terminalSymbol>
-        cfpqState.Reset (buildQuery())
+        cfpqState.Reset firstFreeCallTerminalId
         distancesCache.Clear()
-        //let startVertices =
-        //        vertices.Keys |> Seq.map (fun v -> StartVertex(v,[]))
         addReachabilityInfo startVertices
         updateDistances startVertices finalVertices
 
@@ -263,6 +283,8 @@ type GraphQueryEngine() as this =
         
     member this.GetDistanceToNearestGoal startVertex =
         distancesCache.[startVertex].GetNearestVertex()
+    
+    member this.GetTerminalForCallEdge edge = callEdgeToCallTerminal.[edge]
     
     member this.ToDot (clusters, filePath) =
         let subgraphs =
