@@ -159,8 +159,9 @@ type CfgTemporaryData (methodBase : MethodBase) =
                     currentBasicBlock.FinalVertex <- currentVertex
                     addEdge currentBasicBlock.StartVertex currentVertex
                 | UnconditionalBranch target ->
-                    currentBasicBlock.AddVertex target
-                    dfs' currentBasicBlock target
+                    currentBasicBlock.FinalVertex <- currentVertex
+                    addEdge currentBasicBlock.StartVertex currentVertex
+                    dealWithJump currentVertex target
                 | ConditionalBranch (fallThrough, offsets) ->
                     currentBasicBlock.FinalVertex <- currentVertex
                     addEdge currentBasicBlock.StartVertex currentVertex
@@ -233,6 +234,7 @@ type private ApplicationGraphMessage =
     | AddGoals of array<codeLocation>
     | RemoveGoal of codeLocation
     | AddStates of seq<IGraphTrackableState>
+    | AddForkedStates of parentState:IGraphTrackableState * forkedStates:seq<IGraphTrackableState>
     | MoveState of positionForm:codeLocation * positionTo: IGraphTrackableState
     | AddCFG of Option<AsyncReplyChannel<CfgInfo>> *  MethodBase
     | AddCallEdge of callForm:codeLocation * callTo: codeLocation
@@ -311,7 +313,7 @@ type ApplicationGraph() as this =
                     if exists
                     then
                         let returnTo = getVertexByCodeLocation {callSource with offset = location.ReturnTo}
-                        //queryEngine.RemoveCfgEdge (Edge (callFrom, returnTo))
+                        queryEngine.RemoveCfgEdge (Edge (callFrom, returnTo))
                         returnTo
                     else getVertexByCodeLocation {callSource with offset = callerMethodCfgInfo.Sinks.[0]}
             let callEdge = Edge(callFrom, callTo)
@@ -325,9 +327,19 @@ type ApplicationGraph() as this =
         let initialVertexInInnerGraph = getVertexByCodeLocation initialPosition            
         let finalVertexInnerGraph = getVertexByCodeLocation stateWithNewPosition.CodeLocation 
         if initialVertexInInnerGraph <> finalVertexInnerGraph
-        then
-            let startVertex = StartVertex(getVertexByCodeLocation stateWithNewPosition.CodeLocation, [])
+        then            
             let previousStartVertex = stateToStartVertex.[stateWithNewPosition]
+            let history =
+                if existingCalls.Contains (initialPosition, stateWithNewPosition.CodeLocation)
+                then
+                    Edge (getVertexByCodeLocation initialPosition, getVertexByCodeLocation stateWithNewPosition.CodeLocation)
+                    |> queryEngine.GetTerminalForCallEdge
+                    |> fun x -> x :: previousStartVertex.CallHistory
+                elif Array.contains initialPosition.offset cfgs.[initialPosition.method].Sinks//   <> stateWithNewPosition.CodeLocation.method
+                then List.tail previousStartVertex.CallHistory 
+                else previousStartVertex.CallHistory
+            Logger.trace $"History length: %A{history.Length}."
+            let startVertex = StartVertex(getVertexByCodeLocation stateWithNewPosition.CodeLocation, history)
             let exists, states = startVertexToStates.TryGetValue startVertex
             if exists
             then
@@ -341,11 +353,16 @@ type ApplicationGraph() as this =
             if startVertexToStates.[previousStartVertex].Count = 0
             then queryEngine.RemoveStartVertex previousStartVertex 
             
-    let addStates (states:array<IGraphTrackableState>) =
+    let addStates (parentState:Option<IGraphTrackableState>) (states:array<IGraphTrackableState>) =
+        let history =
+            match parentState with
+            | None -> []
+            | Some state -> stateToStartVertex.[state].CallHistory
+                
         let startVertices =
             states
             |> Array.map (fun state ->
-                let startVertex = StartVertex (getVertexByCodeLocation state.CodeLocation, [])
+                let startVertex = StartVertex (getVertexByCodeLocation state.CodeLocation, history)
                 stateToStartVertex.Add(state, startVertex)
                 let exists, states = startVertexToStates.TryGetValue startVertex
                 if exists
@@ -401,7 +418,9 @@ type ApplicationGraph() as this =
                     | RemoveGoal pos ->
                         getVertexByCodeLocation pos
                         |> queryEngine.RemoveFinalVertex
-                    | AddStates states -> Array.ofSeq states |> addStates 
+                    | AddStates states -> Array.ofSeq states |> addStates None
+                    | AddForkedStates (parentState, forkedStates) ->
+                        addStates (Some parentState) (Array.ofSeq forkedStates)
                     | MoveState (_from,_to) ->
                         tryGetCfgInfo _to.CodeLocation.method |> ignore                            
                         moveState _from _to
@@ -445,6 +464,9 @@ type ApplicationGraph() as this =
         
     member this.AddStates (states:seq<IGraphTrackableState>) =            
         messagesProcessor.Post <| AddStates states
+        
+    member this.AddForkedStates (parentState:IGraphTrackableState, states:seq<IGraphTrackableState>) =            
+        messagesProcessor.Post <| AddForkedStates (parentState,states)
         
     member this.MoveState (fromLocation : codeLocation) (toLocation : IGraphTrackableState) =
         messagesProcessor.Post <| MoveState (fromLocation, toLocation)

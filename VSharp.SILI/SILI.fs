@@ -135,13 +135,8 @@ type public SILI(options : SiliOptions) =
             | Instruction(_, entryMethod) when concolicPools.TryGetValue(entryMethod, pool) ->
                 pool.Value.StepDone(s, s::newStates)
             | _ -> ()
-            let loc' = s.currentLoc
             CFG.applicationGraph.MoveState loc s
-            let locationsForQuery = ResizeArray<_>([|loc'|])
-            newStates |> Seq.iter (fun newState ->
-                let loc = currentLoc newState
-                locationsForQuery.Add loc
-                CFG.applicationGraph.AddState newState)
+            CFG.applicationGraph.AddForkedStates (s, Seq.cast<_> newStates)
             let distances = CFG.applicationGraph.GetDistanceToNearestGoal(Seq.cast<_> (s::newStates))
             Logger.trace $"Distances to nearest goals: %A{Array.ofSeq distances |> Array. map snd}"
             searcher.UpdateStates s newStates
