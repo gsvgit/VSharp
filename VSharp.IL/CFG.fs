@@ -329,17 +329,16 @@ type ApplicationGraph() as this =
         if initialVertexInInnerGraph <> finalVertexInnerGraph
         then            
             let previousStartVertex = stateToStartVertex.[stateWithNewPosition]
-            let history =
+            let historySpecificRSMState =
                 if existingCalls.Contains (initialPosition, stateWithNewPosition.CodeLocation)
                 then
                     Edge (getVertexByCodeLocation initialPosition, getVertexByCodeLocation stateWithNewPosition.CodeLocation)
                     |> queryEngine.GetTerminalForCallEdge
-                    |> fun x -> x :: previousStartVertex.CallHistory
+                    |> fun x -> queryEngine.AddHistoryStep(previousStartVertex, x)                        
                 elif Array.contains initialPosition.offset cfgs.[initialPosition.method].Sinks//   <> stateWithNewPosition.CodeLocation.method
-                then List.tail previousStartVertex.CallHistory 
-                else previousStartVertex.CallHistory
-            Logger.trace $"History length: %A{history.Length}."
-            let startVertex = StartVertex(getVertexByCodeLocation stateWithNewPosition.CodeLocation, history)
+                then queryEngine.PopHistoryStep previousStartVertex                   
+                else previousStartVertex.HistorySpecificRSMState            
+            let startVertex = StartVertex(getVertexByCodeLocation stateWithNewPosition.CodeLocation, historySpecificRSMState)
             let exists, states = startVertexToStates.TryGetValue startVertex
             if exists
             then
@@ -356,8 +355,8 @@ type ApplicationGraph() as this =
     let addStates (parentState:Option<IGraphTrackableState>) (states:array<IGraphTrackableState>) =
         let history =
             match parentState with
-            | None -> []
-            | Some state -> stateToStartVertex.[state].CallHistory
+            | None -> None
+            | Some state -> stateToStartVertex.[state].HistorySpecificRSMState
                 
         let startVertices =
             states
