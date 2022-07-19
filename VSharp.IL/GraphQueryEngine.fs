@@ -56,13 +56,15 @@ type private DistancesStorage () =
         for kvp in distances do
             updateNearestVertex kvp.Key kvp.Value
         
-type CallHistory = list<int<terminalSymbol>>
-
 [<Struct>]
 type StartVertex =
     val Vertex: int<inputGraphVertex>
-    val CallHistory: CallHistory
-    new (vertex, callHistory) = {Vertex = vertex; CallHistory = callHistory}
+    val HistorySpecificRSMState: Option<int<rsmState>>    
+    new (vertex, historySpecificRSMState) =
+        {
+            Vertex = vertex
+            HistorySpecificRSMState = historySpecificRSMState            
+        }
 
 [<Struct>]
 type Cluster =
@@ -76,101 +78,70 @@ type Edge =
     val FinalVertex: int<inputGraphVertex>
     new (startVertex, finalVertex) = {StartVertex = startVertex; FinalVertex = finalVertex}
     
-type private CfpqState (terminalForCFGEdge, firstFreeCallTerminalId) =
+type private CfpqState (query) =
     let mutable gss = GSS()    
     let mutable matchedRanges = MatchedRanges ()
-    let computedDistances = Dictionary<MatchedRange,int>()    
+    let computedDistances = Dictionary<MatchedRange,DistanceInfo>()    
     let reachableVertices = Dictionary<int<inputGraphVertex>,HashSet<int<inputGraphVertex>>>()
-    let historyToQuery = Dictionary<list<int<terminalSymbol>>,RSM>()
-    let mutable firstFreeRsmState = 3<rsmState>
-    let mutable _balancedBracketsBox = Unchecked.defaultof<RSMBox>
-    let mutable _baseQueryStartBox = Unchecked.defaultof<RSMBox>
-    
-    let buildQuery firstFreeCallTerminalId =
-        let startBox =
-            RSMBox(
-                0<rsmState>,
-                HashSet [|1<rsmState>|],
-                [|                    
-                    yield RSMEdges.NonTerminalEdge(0<rsmState>, 2<rsmState>, 1<rsmState>)                    
-                    for callSymbol in 1<terminalSymbol> .. 2<terminalSymbol> .. firstFreeCallTerminalId - 1<terminalSymbol> do
-                      yield RSMEdges.TerminalEdge(1<rsmState>, callSymbol, 0<rsmState>)
-                |]
-                )
-        let balancedBracketsBox =          
-          RSMBox(
-              2<rsmState>,
-              HashSet [|2<rsmState>|],
-              [|
-                  yield RSMEdges.TerminalEdge (2<rsmState>, terminalForCFGEdge, 2<rsmState>)
-                  for callSymbol in 1<terminalSymbol> .. 2<terminalSymbol> .. firstFreeCallTerminalId - 1<terminalSymbol> do
-                      yield RSMEdges.TerminalEdge(2<rsmState>, callSymbol, firstFreeRsmState)
-                      yield RSMEdges.NonTerminalEdge(firstFreeRsmState, 2<rsmState>, firstFreeRsmState + 1<rsmState>)
-                      yield RSMEdges.TerminalEdge(firstFreeRsmState + 1<rsmState>, callSymbol + 1<terminalSymbol>, 2<rsmState>)                  
-                      firstFreeRsmState <- firstFreeRsmState + 2<rsmState>
-          |])
-        _balancedBracketsBox <- balancedBracketsBox
-        _baseQueryStartBox <- startBox
-        RSM([|startBox; balancedBracketsBox|], startBox)
-    
-    let mutable baseQuery = buildQuery firstFreeCallTerminalId
-    
-    
-    let buildQueryWithHistory history =
-        let exists, query = historyToQuery.TryGetValue history
-        if exists
-        then query
-        else
-            let startBox =
-                RSMBox (
-                    firstFreeRsmState,
-                    HashSet<_>([|for i in 1 .. history.Length + 2 -> firstFreeRsmState + i * 1<rsmState>|]),
-                    [|
-                        yield RSMEdges.NonTerminalEdge(firstFreeRsmState, 0<rsmState>, firstFreeRsmState + 1<rsmState>)
-                        yield RSMEdges.NonTerminalEdge(firstFreeRsmState, 2<rsmState>, firstFreeRsmState + 2<rsmState>)
-                        firstFreeRsmState <- firstFreeRsmState + 2<rsmState>
-                        for h in history do
-                            yield RSMEdges.TerminalEdge(firstFreeRsmState, h + 1<terminalSymbol>, firstFreeRsmState + 1<rsmState>)
-                            yield RSMEdges.NonTerminalEdge(firstFreeRsmState + 1<rsmState>, 2<rsmState>, firstFreeRsmState + 2<rsmState>)
-                            firstFreeRsmState <- firstFreeRsmState + 2<rsmState>
-                    |]                    
-                    )
-            let rsm = RSM([|startBox; _balancedBracketsBox; _baseQueryStartBox|], startBox)
-            historyToQuery.Add (history, rsm)
-            //rsm.ToDot "rsm.dot"
-            rsm
-    
+    let mutable query = query
     member this.GSS 
         with get () = gss        
     member this.MatchedRanges
         with get () = matchedRanges        
     member this.ReachableVertices
         with get () = reachableVertices
-    member this.BaseQuery = baseQuery
-    member this.HistoryToQuery = historyToQuery
+    member this.Query = query
     member this.ComputedDistances
-        with get () = computedDistances    
-    member this.BuildQueryWithHistory history = buildQueryWithHistory history    
-    member this.Reset firstFreeCallTerminalId =
-        Logger.trace $"CFQP cache info: historyToQuery: %i{historyToQuery.Count}, computedDistances: %i{computedDistances.Count}"
-        firstFreeRsmState <- 3<rsmState>
-        baseQuery <- buildQuery firstFreeCallTerminalId        
+        with get () = computedDistances            
+    member this.Reset _query =
+        Logger.trace $"CFQP cache info: computedDistances: %i{computedDistances.Count}"                        
         gss <- GSS()
-        matchedRanges <- MatchedRanges ()
-        historyToQuery.Clear()
+        query <- _query
+        matchedRanges <- MatchedRanges ()        
         reachableVertices.Clear()
         computedDistances.Clear()
         
-
 type GraphQueryEngine() as this =
     let vertices = Dictionary<int<inputGraphVertex>,ResizeArray<InputGraphEdge>>()
+    let balancedBracketsRsmBoxStartState = 2<rsmState>
+    let balancedBracketsRsmBoxFinalState = 2<rsmState>
+    let callImbalanceRsmBoxStartState = 0<rsmState>
+    let callImbalanceRsmBoxFinalState = 1<rsmState>
+    let historyRsmBoxStartState = 3<rsmState>
+    let historyRsmBoxDefaultFinalState = 4<rsmState>
+    let historyRsmBoxHistoryStartState = 5<rsmState>
+    let mutable firstFreeRsmState = 6<rsmState>
     let terminalForCFGEdge = 0<terminalSymbol>
     let mutable firstFreeCallTerminalId = 1<terminalSymbol>
+    let historyRsmBox =
+        RSMBox(
+            historyRsmBoxStartState,
+            HashSet[|historyRsmBoxDefaultFinalState|],
+            [|
+                RSMEdges.NonTerminalEdge(historyRsmBoxStartState, callImbalanceRsmBoxFinalState, historyRsmBoxDefaultFinalState)
+                RSMEdges.NonTerminalEdge(historyRsmBoxStartState, balancedBracketsRsmBoxStartState, historyRsmBoxHistoryStartState)
+            |]
+            )
+    let balancedBracketsRsmBox =         
+        RSMBox(
+            balancedBracketsRsmBoxStartState,
+            HashSet[|balancedBracketsRsmBoxFinalState|],
+            [| |]
+            )
+    let callImbalanceBracketsRsmBox =         
+        RSMBox(
+            callImbalanceRsmBoxStartState,
+            HashSet[|callImbalanceRsmBoxStartState|],
+            [|
+                RSMEdges.NonTerminalEdge(callImbalanceRsmBoxStartState, balancedBracketsRsmBoxStartState, callImbalanceRsmBoxStartState)
+            |]
+            )
+    let getQuery() = RSM([|historyRsmBox; balancedBracketsRsmBox; callImbalanceBracketsRsmBox|], historyRsmBox)
     let finalVertices = ResizeArray<int<inputGraphVertex>>()
     let startVertices = HashSet<StartVertex>()    
     let distancesCache = Dictionary<StartVertex,DistancesStorage>()
     let callEdgeToCallTerminal = Dictionary<Edge,int<terminalSymbol>>()
-    let cfpqState = CfpqState(terminalForCFGEdge, firstFreeCallTerminalId)
+    let cfpqState = CfpqState(getQuery())
     
     let addReachabilityInfo (startVertices:HashSet<StartVertex>) =        
         if Seq.length startVertices > 0
@@ -182,24 +153,32 @@ type GraphQueryEngine() as this =
                 then
                     let distances = DistancesStorage()                
                     distancesCache.Add(vertex, distances)
-                    
+
             startVertices
             |> Seq.iter (fun (v:StartVertex) ->
-                evalFromState cfpqState.ReachableVertices cfpqState.GSS cfpqState.MatchedRanges this (HashSet<_>[|v.Vertex|]) (cfpqState.BuildQueryWithHistory v.CallHistory) Mode.AllPaths
+                evalFromState cfpqState.ReachableVertices cfpqState.GSS cfpqState.MatchedRanges this (HashSet<_>[|v.Vertex|]) cfpqState.Query Mode.AllPaths
                 |> ignore )
 
             Logger.trace $"GLL finished. GLL running time: %A{(System.DateTime.Now - startGLL).TotalMilliseconds} ms."            
             
     let updateDistances startVertices finalVertices =        
         startVertices
-        |> Seq.iter (fun (v:StartVertex) -> 
-            let distances =
-                //Logger.trace $"Original final states: %A{cfpqState.HistoryToQuery.[v.CallHistory].OriginalFinalStates}"
-                cfpqState.MatchedRanges.GetShortestDistances(cfpqState.HistoryToQuery.[v.CallHistory], cfpqState.ComputedDistances, [|v.Vertex|], finalVertices)
-            for _from,_to,distance in distances do
-                match distance with            
-                | Reachable d -> distancesCache.[v].AddOrUpdate(_to, d * 1<distance>)
-                | Unreachable -> ()
+        |> Seq.iter (fun (v:StartVertex) ->
+            let update distances =
+                for _from,_to,distance in distances do
+                    match distance with            
+                    | Reachable d -> distancesCache.[v].AddOrUpdate(_to, d * 1<distance>)
+                    | Unreachable -> ()
+            let historyIndependentDistances =                
+                cfpqState.MatchedRanges.GetShortestDistances(cfpqState.Query, HashSet [|historyRsmBoxDefaultFinalState|], HashSet(), cfpqState.ComputedDistances, v.Vertex, finalVertices)
+            update historyIndependentDistances
+            
+            match v.HistorySpecificRSMState with
+            | None -> ()
+            | Some p ->
+                let historyDependentDistances =                
+                    cfpqState.MatchedRanges.GetShortestDistances(cfpqState.Query, cfpqState.Query.OriginalFinalStates, HashSet([|p|]), cfpqState.ComputedDistances, v.Vertex, finalVertices)
+                update historyDependentDistances
         )
         
     let addCfgEdge (edge:Edge) =
@@ -257,12 +236,20 @@ type GraphQueryEngine() as this =
         
         callEdgeToCallTerminal.Add(callEdge, firstFreeCallTerminalId)
         
+        callImbalanceBracketsRsmBox.AddTransition(TerminalEdge(callImbalanceRsmBoxFinalState, firstFreeCallTerminalId, callImbalanceRsmBoxStartState))
+        
+        balancedBracketsRsmBox.AddTransition(TerminalEdge(balancedBracketsRsmBoxStartState, firstFreeCallTerminalId, firstFreeRsmState))
+        balancedBracketsRsmBox.AddTransition(NonTerminalEdge(firstFreeRsmState, balancedBracketsRsmBoxStartState, firstFreeRsmState + 1<rsmState>))
+        balancedBracketsRsmBox.AddTransition(TerminalEdge(firstFreeRsmState + 1<rsmState>, firstFreeCallTerminalId + 1<terminalSymbol>, balancedBracketsRsmBoxFinalState))
+        
+        firstFreeRsmState <- firstFreeRsmState + 2<rsmState>
+        
         for edge:Edge in returnEdges do    
             InputGraphEdge(firstFreeCallTerminalId + 1<terminalSymbol>, edge.FinalVertex)
             |> vertices.[edge.StartVertex].Add
             
-        firstFreeCallTerminalId <- firstFreeCallTerminalId + 2<terminalSymbol>
-        cfpqState.Reset firstFreeCallTerminalId
+        firstFreeCallTerminalId <- firstFreeCallTerminalId + 2<terminalSymbol>        
+        cfpqState.Reset (getQuery())
         distancesCache.Clear()
         addReachabilityInfo startVertices
         updateDistances startVertices finalVertices
@@ -286,6 +273,70 @@ type GraphQueryEngine() as this =
     
     member this.GetTerminalForCallEdge edge = callEdgeToCallTerminal.[edge]
     
+    member this.AddHistoryStep (previousStartVertex:StartVertex, newCallTerminal:int<terminalSymbol>) =
+        let returnSymbol = newCallTerminal + 1<terminalSymbol>
+        
+        match previousStartVertex.HistorySpecificRSMState with
+        | Some specificPoint -> 
+            let previousReturn = (historyRsmBox.OutgoingEdges specificPoint).[0].Terminal                        
+            
+            let suchStepExists =
+                historyRsmBox.OutgoingEdges historyRsmBoxHistoryStartState
+                |> ResizeArray.tryFind                 
+                    (
+                      fun e ->
+                          match e with 
+                          | TerminalEdge (_from,_t,_to) ->
+                               _t = returnSymbol
+                               && (historyRsmBox.OutgoingEdges (_to + 1<rsmState>)).[0].Terminal = previousReturn
+                          | _ -> failwith "Inconsistent history RSM.")
+            
+            let newSpecificPoint = 
+                if suchStepExists.IsNone
+                then
+                    let mergePoint = (historyRsmBox.OutgoingEdges (specificPoint + 1<rsmState>)).[0].FinalState
+                    historyRsmBox.AddTransition (TerminalEdge(historyRsmBoxHistoryStartState, returnSymbol, firstFreeRsmState))
+                    historyRsmBox.AddTransition (NonTerminalEdge(firstFreeRsmState, balancedBracketsRsmBoxStartState, firstFreeRsmState + 1<rsmState>))
+                    historyRsmBox.AddTransition (TerminalEdge(firstFreeRsmState + 1<rsmState>, previousReturn, firstFreeRsmState + 2<rsmState>))
+                    historyRsmBox.AddTransition (NonTerminalEdge(firstFreeRsmState + 2<rsmState>, balancedBracketsRsmBoxStartState, mergePoint))
+                    let added = historyRsmBox.FinalStates.Add (firstFreeRsmState + 1<rsmState>)
+                    assert added
+                    firstFreeRsmState <- firstFreeRsmState + 3<rsmState>
+                    firstFreeRsmState - 3<rsmState>
+                else
+                    suchStepExists.Value.FinalState
+                    
+            Some newSpecificPoint
+        | None ->
+            historyRsmBox.AddTransition (TerminalEdge(historyRsmBoxHistoryStartState, returnSymbol, firstFreeRsmState))
+            historyRsmBox.AddTransition (NonTerminalEdge(firstFreeRsmState, balancedBracketsRsmBoxStartState, firstFreeRsmState + 1<rsmState>))
+            let added = historyRsmBox.FinalStates.Add (firstFreeRsmState + 1<rsmState>)
+            assert added
+            firstFreeRsmState <- firstFreeRsmState + 2<rsmState>
+            Some (firstFreeRsmState - 2<rsmState>)
+
+    member this.PopHistoryStep (startVertex:StartVertex) =
+        match startVertex.HistorySpecificRSMState with
+        | Some specificPoint ->
+            let outgoingEdges = historyRsmBox.OutgoingEdges (specificPoint + 1<rsmState>) 
+            if outgoingEdges.Count = 1
+            then
+                let previousReturn = outgoingEdges.[0].Terminal            
+                let newSpecificPoint =
+                    let possibleNewHeads =
+                        historyRsmBox.OutgoingEdges historyRsmBoxHistoryStartState
+                        |> ResizeArray.filter (fun e -> e.Terminal = previousReturn)            
+                    if possibleNewHeads.Count = 1
+                    then possibleNewHeads.[0].FinalState
+                    else
+                        let mergePoint = (historyRsmBox.OutgoingEdges (specificPoint + 1<rsmState>)).[0].FinalState
+                        possibleNewHeads
+                        |> ResizeArray.find (fun e -> (historyRsmBox.OutgoingEdges e.FinalState).[0].FinalState = mergePoint)
+                        |> fun x -> x.FinalState
+                Some newSpecificPoint
+            else None
+        | None -> failwith "Pop from empty history."
+        
     member this.ToDot (clusters, filePath) =
         let subgraphs =
             seq{
