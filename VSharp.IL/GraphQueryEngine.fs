@@ -81,7 +81,7 @@ type Edge =
 type private CfpqState (query) =
     let mutable gss = GSS()    
     let mutable matchedRanges = MatchedRanges ()
-    let computedDistances = Dictionary<MatchedRange,DistanceInfo>()    
+    let computedDistances = ResizeArray<Dictionary<MatchedRange,DistanceInfo>>()    
     let reachableVertices = Dictionary<int<inputGraphVertex>,HashSet<int<inputGraphVertex>>>()
     let mutable query = query
     member this.GSS 
@@ -118,7 +118,7 @@ type GraphQueryEngine() as this =
             historyRsmBoxStartState,
             HashSet[|historyRsmBoxDefaultFinalState|],
             [|
-                RSMEdges.NonTerminalEdge(historyRsmBoxStartState, callImbalanceRsmBoxFinalState, historyRsmBoxDefaultFinalState)
+                RSMEdges.NonTerminalEdge(historyRsmBoxStartState, callImbalanceRsmBoxStartState, historyRsmBoxDefaultFinalState)
                 RSMEdges.NonTerminalEdge(historyRsmBoxStartState, balancedBracketsRsmBoxStartState, historyRsmBoxHistoryStartState)
             |]
             )
@@ -126,14 +126,16 @@ type GraphQueryEngine() as this =
         RSMBox(
             balancedBracketsRsmBoxStartState,
             HashSet[|balancedBracketsRsmBoxFinalState|],
-            [| |]
+            [|
+                TerminalEdge(balancedBracketsRsmBoxStartState,terminalForCFGEdge,balancedBracketsRsmBoxFinalState)
+            |]
             )
     let callImbalanceBracketsRsmBox =         
         RSMBox(
             callImbalanceRsmBoxStartState,
-            HashSet[|callImbalanceRsmBoxStartState|],
+            HashSet[|callImbalanceRsmBoxFinalState|],
             [|
-                RSMEdges.NonTerminalEdge(callImbalanceRsmBoxStartState, balancedBracketsRsmBoxStartState, callImbalanceRsmBoxStartState)
+                RSMEdges.NonTerminalEdge(callImbalanceRsmBoxStartState, balancedBracketsRsmBoxStartState, callImbalanceRsmBoxFinalState)
             |]
             )
     let getQuery() = RSM([|historyRsmBox; balancedBracketsRsmBox; callImbalanceBracketsRsmBox|], historyRsmBox)
@@ -146,7 +148,7 @@ type GraphQueryEngine() as this =
     let addReachabilityInfo (startVertices:HashSet<StartVertex>) =        
         if Seq.length startVertices > 0
         then            
-            Logger.trace $"GLL started. Vertices in graph: %i{vertices.Count}. Start vertices count: %A{Seq.length startVertices}."
+            Logger.trace $"GLL started. Vertices in graph: %i{vertices.Count}. States in RSM: %A{cfpqState.Query.StatesCount}. Start vertices count: %A{Seq.length startVertices}."
             let startGLL = System.DateTime.Now
             for vertex in startVertices do
                 if not <| distancesCache.ContainsKey vertex
@@ -161,13 +163,14 @@ type GraphQueryEngine() as this =
 
             Logger.trace $"GLL finished. GLL running time: %A{(System.DateTime.Now - startGLL).TotalMilliseconds} ms."            
             
-    let updateDistances startVertices finalVertices =        
+    let updateDistances startVertices finalVertices =
+        let start = System.DateTime.Now
         startVertices
         |> Seq.iter (fun (v:StartVertex) ->
             let update distances =
-                for _from,_to,distance in distances do
-                    match distance with            
-                    | Reachable d -> distancesCache.[v].AddOrUpdate(_to, d * 1<distance>)
+                for (distanceInfo:DistanceComputationResult) in distances do
+                    match distanceInfo.Distance with            
+                    | Reachable d -> distancesCache.[v].AddOrUpdate(distanceInfo.FinalVertex  , d * 1<distance>)
                     | Unreachable -> ()
             let historyIndependentDistances =                
                 cfpqState.MatchedRanges.GetShortestDistances(cfpqState.Query, HashSet [|historyRsmBoxDefaultFinalState|], HashSet(), cfpqState.ComputedDistances, v.Vertex, finalVertices)
@@ -180,6 +183,7 @@ type GraphQueryEngine() as this =
                     cfpqState.MatchedRanges.GetShortestDistances(cfpqState.Query, cfpqState.Query.OriginalFinalStates, HashSet([|p|]), cfpqState.ComputedDistances, v.Vertex, finalVertices)
                 update historyDependentDistances
         )
+        Logger.trace $"Distances updated in %A{(System.DateTime.Now - start).TotalMilliseconds} milliseconds."
         
     let addCfgEdge (edge:Edge) =
         let exists, outgoingEdges = vertices.TryGetValue edge.StartVertex
@@ -275,10 +279,10 @@ type GraphQueryEngine() as this =
     
     member this.AddHistoryStep (previousStartVertex:StartVertex, newCallTerminal:int<terminalSymbol>) =
         let returnSymbol = newCallTerminal + 1<terminalSymbol>
-        
+        //cfpqState.Query.ToDot "rsm.dot"
         match previousStartVertex.HistorySpecificRSMState with
         | Some specificPoint -> 
-            let previousReturn = (historyRsmBox.OutgoingEdges specificPoint).[0].Terminal                        
+            let previousReturn = (historyRsmBox.IncomingEdges specificPoint).[0].Terminal                
             
             let suchStepExists =
                 historyRsmBox.OutgoingEdges historyRsmBoxHistoryStartState
@@ -294,7 +298,7 @@ type GraphQueryEngine() as this =
             let newSpecificPoint = 
                 if suchStepExists.IsNone
                 then
-                    let mergePoint = (historyRsmBox.OutgoingEdges (specificPoint + 1<rsmState>)).[0].FinalState
+                    let mergePoint = specificPoint + 1<rsmState>                        
                     historyRsmBox.AddTransition (TerminalEdge(historyRsmBoxHistoryStartState, returnSymbol, firstFreeRsmState))
                     historyRsmBox.AddTransition (NonTerminalEdge(firstFreeRsmState, balancedBracketsRsmBoxStartState, firstFreeRsmState + 1<rsmState>))
                     historyRsmBox.AddTransition (TerminalEdge(firstFreeRsmState + 1<rsmState>, previousReturn, firstFreeRsmState + 2<rsmState>))
@@ -316,6 +320,7 @@ type GraphQueryEngine() as this =
             Some (firstFreeRsmState - 2<rsmState>)
 
     member this.PopHistoryStep (startVertex:StartVertex) =
+        //getQuery().ToDot "rsm.dot"
         match startVertex.HistorySpecificRSMState with
         | Some specificPoint ->
             let outgoingEdges = historyRsmBox.OutgoingEdges (specificPoint + 1<rsmState>) 
@@ -329,7 +334,7 @@ type GraphQueryEngine() as this =
                     if possibleNewHeads.Count = 1
                     then possibleNewHeads.[0].FinalState
                     else
-                        let mergePoint = (historyRsmBox.OutgoingEdges (specificPoint + 1<rsmState>)).[0].FinalState
+                        let mergePoint = (historyRsmBox.OutgoingEdges (specificPoint + 2<rsmState>)).[0].FinalState
                         possibleNewHeads
                         |> ResizeArray.find (fun e -> (historyRsmBox.OutgoingEdges e.FinalState).[0].FinalState = mergePoint)
                         |> fun x -> x.FinalState
