@@ -165,6 +165,7 @@ type GraphQueryEngine() as this =
             
     let updateDistances startVertices finalVertices =
         let start = System.DateTime.Now
+        let mutable cnt = 0
         startVertices
         |> Seq.iter (fun (v:StartVertex) ->
             let update distances =
@@ -172,18 +173,20 @@ type GraphQueryEngine() as this =
                     match distanceInfo.Distance with            
                     | Reachable d -> distancesCache.[v].AddOrUpdate(distanceInfo.FinalVertex  , d * 1<distance>)
                     | Unreachable -> ()
-            let historyIndependentDistances =                
+            let historyIndependentDistances =
+                cnt <- cnt + 1
                 cfpqState.MatchedRanges.GetShortestDistances(cfpqState.Query, HashSet [|historyRsmBoxDefaultFinalState|], HashSet(), cfpqState.ComputedDistances, v.Vertex, finalVertices)
             update historyIndependentDistances
             
             match v.HistorySpecificRSMState with
             | None -> ()
             | Some p ->
+                cnt <- cnt + 1
                 let historyDependentDistances =                
                     cfpqState.MatchedRanges.GetShortestDistances(cfpqState.Query, cfpqState.Query.OriginalFinalStates, HashSet([|p|]), cfpqState.ComputedDistances, v.Vertex, finalVertices)
                 update historyDependentDistances
         )
-        Logger.trace $"Distances updated in %A{(System.DateTime.Now - start).TotalMilliseconds} milliseconds."
+        Logger.trace $"Distances updated in %A{(System.DateTime.Now - start).TotalMilliseconds} milliseconds. GetShortestDistances used %i{cnt} times. Computed distances: %i{cfpqState.ComputedDistances |> ResizeArray.fold  (fun y x -> y + x.Count) 0}"
         
     let addCfgEdge (edge:Edge) =
         let exists, outgoingEdges = vertices.TryGetValue edge.StartVertex

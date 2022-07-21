@@ -171,6 +171,7 @@ type public SILI(options : SiliOptions) =
             | Stop -> __unreachable__()
 
     member private x.AnswerPobs entryPoint cmdArgs initialStates =
+        CFG.applicationGraph.Reset()
         CFG.applicationGraph.RegisterMethod entryPoint
         statistics.ExplorationStarted()
         let mainPobs = coveragePobsForMethod entryPoint |> Seq.filter (fun pob -> pob.loc.offset <> 0)
