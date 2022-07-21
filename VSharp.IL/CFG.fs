@@ -20,21 +20,13 @@ type IGraphTrackableState =
 [<Struct>]
 type CallInfo =
     val CallFrom: offset
-    val ReturnTo: offset
-    val IsExternalStaticCall: bool
+    val ReturnTo: offset    
     new (callFrom, returnTo) =
         {
             CallFrom = callFrom
-            ReturnTo = returnTo
-            IsExternalStaticCall = false
+            ReturnTo = returnTo            
         }
-    new (callFrom, returnTo, isExternalStatic) =
-        {
-            CallFrom = callFrom
-            ReturnTo = returnTo
-            IsExternalStaticCall = isExternalStatic
-        }
-
+        
 type private BasicBlock (startVertex: offset) =
     let innerVertices = ResizeArray<offset>()
     let mutable finalVertex = None 
@@ -125,12 +117,11 @@ type CfgTemporaryData (methodBase : MethodBase) =
                     addEdge src dst
                     dfs' (BasicBlock dst)  dst
                 
-                let processCall callFrom returnTo isStaticCall =
-                    calls.Add(CallInfo(callFrom,returnTo,isStaticCall))
+                let processCall callFrom returnTo =
+                    calls.Add(CallInfo(callFrom,returnTo))
                     currentBasicBlock.FinalVertex <- currentVertex
-                    addEdge currentBasicBlock.StartVertex currentVertex
-                    if isStaticCall
-                    then addEdge callFrom returnTo
+                    addEdge currentBasicBlock.StartVertex currentVertex                    
+                    addEdge callFrom returnTo
                     dfs' (BasicBlock returnTo) returnTo
                 
                 let ipTransition = Instruction.findNextInstructionOffsetAndEdges opCode ilBytes currentVertex
@@ -139,9 +130,7 @@ type CfgTemporaryData (methodBase : MethodBase) =
                 | FallThrough offset when Instruction.isDemandingCallOpCode opCode ->
                     let calledMethod = TokenResolver.resolveMethodFromMetadata methodBase ilBytes (currentVertex + opCode.Size)
                     if not <| Reflection.isExternalMethod calledMethod
-                    then processCall currentVertex offset true
-                    //elif calledMethod.IsStatic 
-                    //then processCall currentVertex offset true
+                    then processCall currentVertex offset                    
                     else
                         currentBasicBlock.AddVertex offset
                         dfs' currentBasicBlock offset
@@ -152,7 +141,7 @@ type CfgTemporaryData (methodBase : MethodBase) =
                     //TODO gsv fix it.
                     currentBasicBlock.FinalVertex <- currentVertex
                     addEdge currentBasicBlock.StartVertex currentVertex
-                    calls.Add(CallInfo(currentVertex,currentVertex+1))
+                    calls.Add(CallInfo(currentVertex, currentVertex+1))
                 | Return ->
                     addVertex currentVertex
                     sinks.Add currentVertex
@@ -231,6 +220,7 @@ type CfgInfo (cfg:CfgTemporaryData) =
         resolveBasicBlock offset
 
 type private ApplicationGraphMessage =
+    | ResetQueryEngine
     | AddGoals of array<codeLocation>
     | RemoveGoal of codeLocation
     | AddStates of seq<IGraphTrackableState>
@@ -251,7 +241,7 @@ type ApplicationGraph() as this =
     let stateToStartVertex = Dictionary<IGraphTrackableState, StartVertex>()
     let startVertexToStates = Dictionary<StartVertex, HashSet<IGraphTrackableState>>()
     let cfgs = Dictionary<MethodBase, CfgInfo>()    
-    let innerGraphVerticesToCodeLocationMap = ResizeArray<_>() //SortedDictionary<_,_>(comparer = RangesComparer())
+    let innerGraphVerticesToCodeLocationMap = ResizeArray<_>()
     let existingCalls = HashSet<codeLocation*codeLocation>()
     let mutable queryEngine = GraphQueryEngine()
     let codeLocationToVertex = Dictionary<codeLocation, int<inputGraphVertex>>()        
@@ -288,11 +278,7 @@ type ApplicationGraph() as this =
                 queryEngine.AddCfgEdge <| Edge (srcVertex, targetVertex)        
             
         cfgToFirstVertexIdMapping.Add(methodBase, firstFreeVertexId)
-        cfg            
-        
-    let getCodeLocation (vertex:int<inputGraphVertex>) =
-        let codeLocation = innerGraphVerticesToCodeLocationMap.[int vertex]
-        codeLocation
+        cfg
                
     let addCallEdge (callSource:codeLocation) (callTarget:codeLocation) =   
         let callerMethodCfgInfo = cfgs.[callSource.method]
@@ -334,7 +320,7 @@ type ApplicationGraph() as this =
                     Edge (getVertexByCodeLocation initialPosition, getVertexByCodeLocation stateWithNewPosition.CodeLocation)
                     |> queryEngine.GetTerminalForCallEdge
                     |> fun x -> queryEngine.AddHistoryStep(previousStartVertex, x)                        
-                elif Array.contains initialPosition.offset cfgs.[initialPosition.method].Sinks//   <> stateWithNewPosition.CodeLocation.method
+                elif Array.contains initialPosition.offset cfgs.[initialPosition.method].Sinks
                 then queryEngine.PopHistoryStep previousStartVertex                   
                 else previousStartVertex.HistorySpecificRSMState            
             let startVertex = StartVertex(getVertexByCodeLocation stateWithNewPosition.CodeLocation, historySpecificRSMState)
@@ -396,14 +382,24 @@ type ApplicationGraph() as this =
                 let! message = inbox.Receive()
                 try                    
                     match message with
+                    | ResetQueryEngine ->
+                        Logger.trace "Application graph reset."
+                        queryEngine <- GraphQueryEngine ()
+                        innerGraphVerticesToCodeLocationMap.Clear()
+                        firstFreeVertexId <- 0<inputGraphVertex>
+                        cfgToFirstVertexIdMapping.Clear()
+                        stateToStartVertex.Clear()
+                        startVertexToStates.Clear()
+                        cfgs.Clear()
+                        existingCalls.Clear()
+                        codeLocationToVertex.Clear()
                     | AddCFG (replyChannel, methodBase) ->
                         let reply cfgInfo =
                             match replyChannel with
                             | Some ch -> ch.Reply cfgInfo
                             | None -> ()
                         let cfgInfo = tryGetCfgInfo methodBase                    
-                        reply cfgInfo                        
-                            
+                        reply cfgInfo
                     | AddCallEdge (_from, _to) ->
                         tryGetCfgInfo _from.method |> ignore
                         tryGetCfgInfo _to.method |> ignore                       
@@ -460,80 +456,72 @@ type ApplicationGraph() as this =
             else cfgInfo
             
     member this.GetCfg (methodBase: MethodBase) =        
-         //messagesProcessor.PostAndReply (fun ch -> AddCFG (Some ch, methodBase))
-         tryGetCfgInfo methodBase                    
+         messagesProcessor.PostAndReply (fun ch -> AddCFG (Some ch, methodBase))
+         //tryGetCfgInfo methodBase                    
          
             
     member this.RegisterMethod (methodBase: MethodBase) =            
-        //messagesProcessor.Post (AddCFG (None, methodBase))
-        tryGetCfgInfo methodBase |> ignore        
+        messagesProcessor.Post (AddCFG (None, methodBase))
+        //tryGetCfgInfo methodBase |> ignore        
         
     member this.AddCallEdge (sourceLocation : codeLocation) (targetLocation : codeLocation) =        
-        //messagesProcessor.Post <| AddCallEdge (sourceLocation, targetLocation)
-        tryGetCfgInfo sourceLocation.method |> ignore
-        tryGetCfgInfo targetLocation.method |> ignore                       
-        addCallEdge sourceLocation targetLocation
+        messagesProcessor.Post <| AddCallEdge (sourceLocation, targetLocation)
+        //tryGetCfgInfo sourceLocation.method |> ignore
+        //tryGetCfgInfo targetLocation.method |> ignore                       
+        //addCallEdge sourceLocation targetLocation
         
     member this.AddState (state:IGraphTrackableState) =            
-        //messagesProcessor.Post <| AddStates [|state|]
-        Array.ofSeq [|state|] |> addStates None
+        messagesProcessor.Post <| AddStates [|state|]
+        //Array.ofSeq [|state|] |> addStates None
         
     member this.AddStates (states:seq<IGraphTrackableState>) =            
-        //messagesProcessor.Post <| AddStates states
-        Array.ofSeq states |> addStates None
+        messagesProcessor.Post <| AddStates states
+        //Array.ofSeq states |> addStates None
         
     member this.AddForkedStates (parentState:IGraphTrackableState, states:seq<IGraphTrackableState>) =            
-        //messagesProcessor.Post <| AddForkedStates (parentState,states)
-        addStates (Some parentState) (Array.ofSeq states)
+        messagesProcessor.Post <| AddForkedStates (parentState,states)
+        //addStates (Some parentState) (Array.ofSeq states)
         
     member this.MoveState (fromLocation : codeLocation) (toLocation : IGraphTrackableState) =
-        //messagesProcessor.Post <| MoveState (fromLocation, toLocation)
-        tryGetCfgInfo toLocation.CodeLocation.method |> ignore                            
-        moveState fromLocation toLocation
+        messagesProcessor.Post <| MoveState (fromLocation, toLocation)
+        //tryGetCfgInfo toLocation.CodeLocation.method |> ignore                            
+        //moveState fromLocation toLocation
         
     member x.AddGoal (location:codeLocation) =
-        //messagesProcessor.Post <| AddGoals [|location|]
-        [|location|]
-        |> Array.map getVertexByCodeLocation 
-        |> queryEngine.AddFinalVertices
+        messagesProcessor.Post <| AddGoals [|location|]
+        //[|location|]
+        //|> Array.map getVertexByCodeLocation 
+        //|> queryEngine.AddFinalVertices
         
     member x.AddGoals (locations:array<codeLocation>) =
-        //messagesProcessor.Post <| AddGoals locations
-        locations
-        |> Array.map getVertexByCodeLocation 
-        |> queryEngine.AddFinalVertices
+        messagesProcessor.Post <| AddGoals locations
+        //locations
+        //|> Array.map getVertexByCodeLocation 
+        //|> queryEngine.AddFinalVertices
         
     member x.RemoveGoal (location:codeLocation) =
-        //messagesProcessor.Post <| RemoveGoal location
-        getVertexByCodeLocation location
-        |> queryEngine.RemoveFinalVertex
+        messagesProcessor.Post <| RemoveGoal location
+        //getVertexByCodeLocation location
+        //|> queryEngine.RemoveFinalVertex
         
     member this.GetShortestDistancesToAllGoalsFromStates (states: array<codeLocation>) =
         messagesProcessor.PostAndReply (fun ch -> GetShortestDistancesToGoals(ch, states))
         
     member this.GetDistanceToNearestGoal (states: seq<IGraphTrackableState>) =
-        //messagesProcessor.PostAndReply (fun ch -> GetDistanceToNearestGoal(ch, states))
-        let result =
-            states
-            |> Seq.choose (fun state ->
-                match queryEngine.GetDistanceToNearestGoal stateToStartVertex.[state] with
-                | Some (_,distance) -> Some (state, int distance)
-                | None -> None)
-        result
+        messagesProcessor.PostAndReply (fun ch -> GetDistanceToNearestGoal(ch, states))
+        //let result =
+        //    states
+        //    |> Seq.choose (fun state ->
+        //        match queryEngine.GetDistanceToNearestGoal stateToStartVertex.[state] with
+        //        | Some (_,distance) -> Some (state, int distance)
+        //        | None -> None)
+        //result
             
     member this.GetGoalsReachableFromStates (states: array<codeLocation>) =            
         messagesProcessor.PostAndReply (fun ch -> GetReachableGoals(ch, states))
         
-    member this.Reset() =
-        Logger.trace "Application graph reset."
-        queryEngine <- GraphQueryEngine ()
-        innerGraphVerticesToCodeLocationMap.Clear()
-        firstFreeVertexId <- 0<inputGraphVertex>
-        cfgToFirstVertexIdMapping.Clear()
-        stateToStartVertex.Clear()
-        startVertexToStates.Clear()
-        cfgs.Clear()
-        existingCalls.Clear()
-        codeLocationToVertex.Clear()
+    member this.ResetQueryEngine() =
+        messagesProcessor.Post <| ResetQueryEngine
+        
 module CFG =
     let applicationGraph = ApplicationGraph()
