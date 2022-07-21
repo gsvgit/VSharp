@@ -426,7 +426,9 @@ type ApplicationGraph() as this =
         messagesProcessor.Post <| AddForkedStates (parentState,states)
 
     member this.MoveState (fromLocation : codeLocation) (toLocation : IGraphTrackableState) =
-        messagesProcessor.Post <| MoveState (fromLocation, toLocation)
+        //messagesProcessor.Post <| MoveState (fromLocation, toLocation)
+        tryGetCfgInfo toLocation.CodeLocation.method |> ignore                            
+        moveState fromLocation toLocation
         
     member x.AddGoal (location:codeLocation) =
         messagesProcessor.Post <| AddGoals [|location|]
