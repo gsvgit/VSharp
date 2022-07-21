@@ -192,7 +192,7 @@ type public SILI(options : SiliOptions) =
             | Stop -> __unreachable__()
 
     member private x.AnswerPobs entryPoint cmdArgs initialStates =
-        CFG.applicationGraph.Reset()
+        CFG.applicationGraph.ResetQueryEngine()
         CFG.applicationGraph.RegisterMethod entryPoint
         statistics.ExplorationStarted()
         branchesReleased <- false
