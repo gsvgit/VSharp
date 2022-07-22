@@ -134,12 +134,12 @@ type internal CfgTemporaryData (method : MethodWithBody) =
                 | FallThrough offset ->
                     currentBasicBlock.AddVertex offset
                     dfs' currentBasicBlock offset
-                | ExceptionMechanism ->
-                    // TODO: gsv fix it.
-//                    currentBasicBlock.FinalVertex <- currentVertex
-//                    addEdge currentBasicBlock.StartVertex currentVertex
-//                    calls.Add(CallInfo(null, currentVertex, currentVertex + 1))
-                    ()
+                | ExceptionMechanism ->                    
+                    currentBasicBlock.FinalVertex <- currentVertex
+                    addEdge currentBasicBlock.StartVertex currentVertex
+                    if exceptionHandlingEntries.Length > 0
+                    then exceptionHandlingEntries |> Array.iter (fun offset -> calls.Add(CallInfo(currentVertex, offset)))
+                    else attachToAnySink.Add currentVertex
                 | Return ->
                     addVertex currentVertex
                     sinks.Add currentVertex
@@ -176,24 +176,27 @@ type internal CfgTemporaryData (method : MethodWithBody) =
         distFromNode)
 
     do
-        let startVertices =
+        let exceptionHandlingEntries =
             [|
-             yield 0<offsets>
-             for handler in exceptionHandlers do
+                for handler in exceptionHandlers do
                  yield handler.handlerOffset
                  match handler.ehcType with
                  | ehcType.Filter offset -> yield offset
                  | _ -> ()
             |]
-
-        dfs startVertices
-        sortedOffsets |> Seq.iter (fun bb ->
-            if edges.ContainsKey bb then
-                let outgoing = edges.[bb]
-                if outgoing.Count > 1 then
-                    offsetsWithSiblings.UnionWith outgoing
-            else edges.Add(bb, HashSet<_>()))
-
+        let startVertices =
+            [|
+             yield 0
+             yield! exceptionHandlingEntries
+            |]
+        
+        dfs startVertices exceptionHandlingEntries
+        
+        //TODO fix it
+        if sinks.Count > 0
+        then attachToAnySink |> ResizeArray.iter (fun offset -> calls.Add (CallInfo(offset, sinks.[0])))
+        
+    member this.MethodBase = methodBase
     member this.ILBytes = ilBytes
     member this.SortedOffsets = sortedOffsets
     member this.Edges = edges
@@ -332,16 +335,58 @@ type private ApplicationGraphMessage =
     | GetDistanceToNearestGoal
         of AsyncReplyChannel<seq<IGraphTrackableState * int>> * seq<IGraphTrackableState>
 
-type ApplicationGraph() as this =
-
-    let addCallEdge (callSource:codeLocation) (callTarget:codeLocation) =
-        Logger.trace "Add call edge."
-        //__notImplemented__()
-
-    let moveState (initialPosition: codeLocation) (stateWithNewPosition: IGraphTrackableState) =
-        Logger.trace "Move state."
-        //__notImplemented__()
-
+        if not <| existingCalls.Contains (callSource, callTarget)
+        then
+            let added = existingCalls.Add(callSource,callTarget)
+            assert added
+            let returnTo =
+                if Reflection.isStaticConstructor callTarget.method
+                then callFrom
+                else
+                    let exists, location = callerMethodCfgInfo.Calls.TryGetValue callSource.offset
+                    if exists
+                    then
+                        let returnTo = getVertexByCodeLocation {callSource with offset = location.ReturnTo}
+                        queryEngine.RemoveCfgEdge (Edge (callFrom, returnTo))
+                        returnTo
+                    else getVertexByCodeLocation {callSource with offset = callerMethodCfgInfo.Sinks.[0]}
+            let callEdge = Edge(callFrom, callTo)
+            let returnEdges =
+                calledMethodCfgInfo.Sinks
+                |> Array.map(fun sink -> getVertexByCodeLocation {callTarget with offset = sink})
+                |> Array.map (fun returnFrom -> Edge(returnFrom, returnTo))
+            queryEngine.AddCallReturnEdges (callEdge, returnEdges)
+            //toDot("cfg_regexp.dot")
+        
+    let moveState (initialPosition: codeLocation) (stateWithNewPosition: IGraphTrackableState) =        
+        let initialVertexInInnerGraph = getVertexByCodeLocation initialPosition            
+        let finalVertexInnerGraph = getVertexByCodeLocation stateWithNewPosition.CodeLocation 
+        if initialVertexInInnerGraph <> finalVertexInnerGraph
+        then            
+            let previousStartVertex = stateToStartVertex.[stateWithNewPosition]
+            let historySpecificRSMState =
+                if existingCalls.Contains (initialPosition, stateWithNewPosition.CodeLocation)
+                then
+                    Edge (getVertexByCodeLocation initialPosition, getVertexByCodeLocation stateWithNewPosition.CodeLocation)
+                    |> queryEngine.GetTerminalForCallEdge
+                    |> fun x -> queryEngine.AddHistoryStep(previousStartVertex, x)                        
+                elif Array.contains initialPosition.offset cfgs.[initialPosition.method].Sinks || initialPosition.method <> stateWithNewPosition.CodeLocation.method 
+                then queryEngine.PopHistoryStep previousStartVertex                   
+                else previousStartVertex.HistorySpecificRSMState            
+            let startVertex = StartVertex(getVertexByCodeLocation stateWithNewPosition.CodeLocation, historySpecificRSMState)
+            let exists, states = startVertexToStates.TryGetValue startVertex
+            if exists
+            then
+                let added = states.Add stateWithNewPosition
+                assert added
+            else startVertexToStates.Add(startVertex, HashSet<_>[|stateWithNewPosition|])
+            stateToStartVertex.[stateWithNewPosition] <- startVertex
+            let removed = startVertexToStates.[previousStartVertex].Remove stateWithNewPosition
+            assert removed
+            queryEngine.AddStartVertex startVertex
+            if startVertexToStates.[previousStartVertex].Count = 0
+            then queryEngine.RemoveStartVertex previousStartVertex 
+            
     let addStates (parentState:Option<IGraphTrackableState>) (states:array<IGraphTrackableState>) =
         Logger.trace "Add states."
         //__notImplemented__()
@@ -386,15 +431,27 @@ type ApplicationGraph() as this =
                     | AddForkedStates (parentState, forkedStates) ->
                         addStates (Some parentState) (Array.ofSeq forkedStates)
                     | MoveState (_from,_to) ->
-                        tryGetCfgInfo _to.CodeLocation.method |> ignore
+                        //Logger.trace $"Move state from %A{getVertexByCodeLocation _from} to %A{getVertexByCodeLocation _to.CodeLocation}"
+                        tryGetCfgInfo _to.CodeLocation.method |> ignore                            
                         moveState _from _to
                     | GetShortestDistancesToGoals (replyChannel, states) ->
                         Logger.trace "Get shortest distances."
                         __notImplemented__()
                     | GetDistanceToNearestGoal (replyChannel, states) ->
-                        replyChannel.Reply []
-                        //__notImplemented__()
-                    | GetReachableGoals (replyChannel, states) -> __notImplemented__()
+                        let result =
+                            states
+                            |> Seq.choose (fun state ->
+                                match queryEngine.GetDistanceToNearestGoal stateToStartVertex.[state] with
+                                | Some (_,distance) -> Some (state, int distance)
+                                | None -> None)
+                        if Seq.length result = 0
+                        then
+                            let states = states |> Seq.map (fun s -> getVertexByCodeLocation s.CodeLocation |> string) |> String.concat ", "
+                            let goals = queryEngine.GetFinalVertices() |> Seq.map string |> String.concat ", "
+                            Logger.trace $"States: %A{states}. Goals: %A{goals}"
+                            //queryEngine.VisualizeRSM "rsm.dot"
+                        replyChannel.Reply result
+                    | GetReachableGoals (replyChannel, states) -> replyChannel.Reply (Dictionary<_,_>())
                 with
                 | e ->
                     Logger.error $"Something wrong in application graph messages processor: \n %A{e} \n %s{e.Message} \n %s{e.StackTrace}"
@@ -424,9 +481,10 @@ type ApplicationGraph() as this =
 
     member this.AddForkedStates (parentState:IGraphTrackableState) (states:seq<IGraphTrackableState>) =
         messagesProcessor.Post <| AddForkedStates (parentState,states)
-
-    member this.MoveState (fromLocation : codeLocation) (toLocation : IGraphTrackableState) =
-        messagesProcessor.Post <| MoveState (fromLocation, toLocation)
+        //addStates (Some parentState) (Array.ofSeq states)
+        
+    member this.MoveState (fromLocation : codeLocation) (toLocation : IGraphTrackableState) =               
+        messagesProcessor.Post <| MoveState (fromLocation, toLocation)      
         //tryGetCfgInfo toLocation.CodeLocation.method |> ignore                            
         //moveState fromLocation toLocation
         

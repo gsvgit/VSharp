@@ -283,47 +283,57 @@ type GraphQueryEngine() as this =
     member this.AddHistoryStep (previousStartVertex:StartVertex, newCallTerminal:int<terminalSymbol>) =
         let returnSymbol = newCallTerminal + 1<terminalSymbol>
         //cfpqState.Query.ToDot "rsm.dot"
-        match previousStartVertex.HistorySpecificRSMState with
-        | Some specificPoint -> 
-            let previousReturn = (historyRsmBox.IncomingEdges specificPoint).[0].Terminal                
-            
-            let suchStepExists =
-                historyRsmBox.OutgoingEdges historyRsmBoxHistoryStartState
-                |> ResizeArray.tryFind                 
-                    (
-                      fun e ->
-                          match e with 
-                          | TerminalEdge (_from,_t,_to) ->
-                               _t = returnSymbol
-                               && (historyRsmBox.OutgoingEdges (_to + 1<rsmState>)).[0].Terminal = previousReturn
-                          | _ -> failwith "Inconsistent history RSM.")
-            
-            let newSpecificPoint = 
-                if suchStepExists.IsNone
-                then
-                    let mergePoint = specificPoint + 1<rsmState>                        
-                    historyRsmBox.AddTransition (TerminalEdge(historyRsmBoxHistoryStartState, returnSymbol, firstFreeRsmState))
-                    historyRsmBox.AddTransition (NonTerminalEdge(firstFreeRsmState, balancedBracketsRsmBoxStartState, firstFreeRsmState + 1<rsmState>))
-                    historyRsmBox.AddTransition (TerminalEdge(firstFreeRsmState + 1<rsmState>, previousReturn, firstFreeRsmState + 2<rsmState>))
-                    historyRsmBox.AddTransition (NonTerminalEdge(firstFreeRsmState + 2<rsmState>, balancedBracketsRsmBoxStartState, mergePoint))
-                    let added = historyRsmBox.FinalStates.Add (firstFreeRsmState + 1<rsmState>)
-                    assert added
-                    firstFreeRsmState <- firstFreeRsmState + 3<rsmState>
-                    firstFreeRsmState - 3<rsmState>
-                else
-                    suchStepExists.Value.FinalState
-                    
-            Some newSpecificPoint
-        | None ->
-            historyRsmBox.AddTransition (TerminalEdge(historyRsmBoxHistoryStartState, returnSymbol, firstFreeRsmState))
-            historyRsmBox.AddTransition (NonTerminalEdge(firstFreeRsmState, balancedBracketsRsmBoxStartState, firstFreeRsmState + 1<rsmState>))
-            let added = historyRsmBox.FinalStates.Add (firstFreeRsmState + 1<rsmState>)
-            assert added
-            firstFreeRsmState <- firstFreeRsmState + 2<rsmState>
-            Some (firstFreeRsmState - 2<rsmState>)
+        let reset () =
+            cfpqState.Reset (getQuery())
+            distancesCache.Clear()
+            addReachabilityInfo startVertices
+            updateDistances startVertices finalVertices
+        let res =
+            match previousStartVertex.HistorySpecificRSMState with
+            | Some specificPoint -> 
+                let previousReturn = (historyRsmBox.IncomingEdges specificPoint).[0].Terminal                
+                
+                let suchStepExists =
+                    historyRsmBox.OutgoingEdges historyRsmBoxHistoryStartState
+                    |> ResizeArray.tryFind                 
+                        (
+                          fun e ->
+                              match e with 
+                              | TerminalEdge (_from,_t,_to) ->
+                                   _t = returnSymbol
+                                   && (historyRsmBox.OutgoingEdges (_to + 1<rsmState>)).[0].Terminal = previousReturn
+                              | _ -> failwith "Inconsistent history RSM.")
+                
+                let newSpecificPoint = 
+                    if suchStepExists.IsNone
+                    then
+                        let mergePoint = specificPoint + 1<rsmState>                        
+                        historyRsmBox.AddTransition (TerminalEdge(historyRsmBoxHistoryStartState, returnSymbol, firstFreeRsmState))
+                        historyRsmBox.AddTransition (NonTerminalEdge(firstFreeRsmState, balancedBracketsRsmBoxStartState, firstFreeRsmState + 1<rsmState>))
+                        historyRsmBox.AddTransition (TerminalEdge(firstFreeRsmState + 1<rsmState>, previousReturn, firstFreeRsmState + 2<rsmState>))
+                        historyRsmBox.AddTransition (NonTerminalEdge(firstFreeRsmState + 2<rsmState>, balancedBracketsRsmBoxStartState, mergePoint))
+                        let added = historyRsmBox.FinalStates.Add (firstFreeRsmState + 1<rsmState>)
+                        assert added
+                        reset ()
+                        firstFreeRsmState <- firstFreeRsmState + 3<rsmState>
+                        firstFreeRsmState - 3<rsmState>
+                    else
+                        suchStepExists.Value.FinalState
+                        
+                Some newSpecificPoint
+            | None ->
+                historyRsmBox.AddTransition (TerminalEdge(historyRsmBoxHistoryStartState, returnSymbol, firstFreeRsmState))
+                historyRsmBox.AddTransition (NonTerminalEdge(firstFreeRsmState, balancedBracketsRsmBoxStartState, firstFreeRsmState + 1<rsmState>))
+                let added = historyRsmBox.FinalStates.Add (firstFreeRsmState + 1<rsmState>)
+                assert added
+                reset ()
+                firstFreeRsmState <- firstFreeRsmState + 2<rsmState>
+                Some (firstFreeRsmState - 2<rsmState>)        
+        
+        res
 
     member this.PopHistoryStep (startVertex:StartVertex) =
-        //getQuery().ToDot "rsm.dot"
+        //getQuery().ToDot "rsm_pop.dot"
         match startVertex.HistorySpecificRSMState with
         | Some specificPoint ->
             let outgoingEdges = historyRsmBox.OutgoingEdges (specificPoint + 1<rsmState>) 
@@ -344,16 +354,22 @@ type GraphQueryEngine() as this =
                 Some newSpecificPoint
             else None
         | None -> failwith "Pop from empty history."
+                
+    member this.VisualizeRSM filePath =
+        cfpqState.Query.ToDot filePath
         
+    member this.GetFinalVertices () = finalVertices
     member this.ToDot (clusters, filePath) =
+        let mutable clusterCount = 0
         let subgraphs =
             seq{
                 for cluster:Cluster in clusters do
-                    yield $"subgraph cluster_%s{cluster.Name} {{"
+                    yield $"subgraph cluster_%i{clusterCount} {{"
                     yield $"label=%A{cluster.Name}"                    
                     for vertex in cluster.Vertices do
                         yield string vertex
-                    yield "}"  
+                    yield "}"
+                    clusterCount <- clusterCount + 1
             }
                        
         let content =
