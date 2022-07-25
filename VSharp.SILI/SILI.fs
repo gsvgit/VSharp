@@ -191,9 +191,9 @@ type public SILI(options : SiliOptions) =
             | GoBack(s, p) -> x.Backward p s EP
             | Stop -> __unreachable__()
 
-    member private x.AnswerPobs entryPoint cmdArgs initialStates =
-        CFG.applicationGraph.ResetQueryEngine()
-        CFG.applicationGraph.RegisterMethod entryPoint
+    member private x.AnswerPobs entryPoint initialStates =
+        Application.graph.ResetQueryEngine()
+        Application.graph.RegisterMethod entryPoint
         statistics.ExplorationStarted()
         branchesReleased <- false
         let mainPobs = coveragePobsForMethod entryPoint |> Seq.filter (fun pob -> pob.loc.offset <> 0<offsets>)
