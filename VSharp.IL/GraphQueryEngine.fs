@@ -7,6 +7,7 @@ open CFPQ_GLL.InputGraph
 open CFPQ_GLL.RSM
 open CFPQ_GLL.SPPF
 open FSharpx.Collections
+open VSharp
 
 type [<Measure>] distance
 
@@ -77,7 +78,10 @@ type Edge =
     val StartVertex: int<inputGraphVertex>
     val FinalVertex: int<inputGraphVertex>
     new (startVertex, finalVertex) = {StartVertex = startVertex; FinalVertex = finalVertex}
-    
+  
+type TypedEdge =
+    | Virtual of Edge
+    | Real of Edge
 type private CfpqState (query) =
     let mutable gss = GSS()    
     let mutable matchedRanges = MatchedRanges ()
@@ -237,11 +241,15 @@ type GraphQueryEngine() as this =
         let removed = vertices.[edge.StartVertex].Remove(InputGraphEdge(terminalForCFGEdge, edge.FinalVertex))
         assert removed
             
-    member this.AddCallReturnEdges (callEdge:Edge, returnEdges) =
-        InputGraphEdge(firstFreeCallTerminalId, callEdge.FinalVertex)
-        |> vertices.[callEdge.StartVertex].Add
-        
-        callEdgeToCallTerminal.Add(callEdge, firstFreeCallTerminalId)
+    member this.AddCallReturnEdges (callEdge:TypedEdge, returnEdges) =
+        match callEdge with
+        | Real callEdge -> 
+            InputGraphEdge(firstFreeCallTerminalId, callEdge.FinalVertex)
+            |> vertices.[callEdge.StartVertex].Add
+            
+            callEdgeToCallTerminal.Add(callEdge, firstFreeCallTerminalId)
+        | Virtual callEdge ->
+            callEdgeToCallTerminal.Add(callEdge, firstFreeCallTerminalId)
         
         callImbalanceBracketsRsmBox.AddTransition(TerminalEdge(callImbalanceRsmBoxFinalState, firstFreeCallTerminalId, callImbalanceRsmBoxStartState))
         

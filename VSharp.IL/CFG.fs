@@ -339,8 +339,9 @@ type private ApplicationGraphMessage =
         then
             let added = existingCalls.Add(callSource,callTarget)
             assert added
+            let isStaticConstructor = Reflection.isStaticConstructor callTarget.method 
             let returnTo =
-                if Reflection.isStaticConstructor callTarget.method
+                if isStaticConstructor
                 then callFrom
                 else
                     let exists, location = callerMethodCfgInfo.Calls.TryGetValue callSource.offset
@@ -350,7 +351,7 @@ type private ApplicationGraphMessage =
                         queryEngine.RemoveCfgEdge (Edge (callFrom, returnTo))
                         returnTo
                     else getVertexByCodeLocation {callSource with offset = callerMethodCfgInfo.Sinks.[0]}
-            let callEdge = Edge(callFrom, callTo)
+            let callEdge = Edge(callFrom, callTo) |> if isStaticConstructor then Virtual else Real
             let returnEdges =
                 calledMethodCfgInfo.Sinks
                 |> Array.map(fun sink -> getVertexByCodeLocation {callTarget with offset = sink})
