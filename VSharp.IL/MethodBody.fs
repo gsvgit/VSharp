@@ -21,6 +21,7 @@ type ehcType =
 type public ExceptionHandlingClause = { tryOffset : offset; tryLength : offset; handlerOffset : offset; handlerLength : offset; ehcType : ehcType }
 
 type MethodWithBody internal (m : MethodBase) =
+    let desc = Reflection.getMethodDescriptor m
     let name = m.Name
     let fullName = Reflection.getFullMethodName m
     let fullGenericMethodName = lazy(Reflection.fullGenericMethodName m)
@@ -122,10 +123,10 @@ type MethodWithBody internal (m : MethodBase) =
     member x.IsDelegateConstructor with get() = isDelegateConstructor.Force()
 
     override x.ToString() = x.FullName
-    override x.GetHashCode() = m.MethodHandle.GetHashCode()
+    override x.GetHashCode() = desc.GetHashCode()
     override x.Equals(y : obj) =
         match y with
-        | :? MethodWithBody as y -> m.MethodHandle.Value = y.MethodBase.MethodHandle.Value
+        | :? MethodWithBody as y -> x.Descriptor = y.Descriptor
         | _ -> false
 
     member x.HasBody = methodBodyBytes <> null
@@ -175,6 +176,8 @@ type MethodWithBody internal (m : MethodBase) =
 
     // TODO: make it private!
     member x.MethodBase : MethodBase = m
+
+    member private x.Descriptor = desc
 
     member x.ResolveMethod token = Reflection.resolveMethod m token
     member x.ResolveFieldFromMetadata = NumberCreator.extractInt32 x.ILBytes >> Reflection.resolveField m
