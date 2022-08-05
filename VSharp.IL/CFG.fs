@@ -1,5 +1,6 @@
 namespace VSharp
 
+open global.System
 open System.Reflection
 open System.Collections.Generic
 open System
@@ -574,6 +575,7 @@ type ApplicationGraph() as this =
         messagesProcessor.Post ResetQueryEngine
 
 
+
 type IVisualizer =
     abstract AddState : IGraphTrackableState -> unit
     abstract TerminateState : IGraphTrackableState -> unit
@@ -588,6 +590,7 @@ type NullVisualizer() =
         override x.VisualizeStep _ _ _ = ()
 
 
+
 module Application =
     let private methods = Dictionary<MethodBase, Method>()
     let private _loadedMethods = HashSet<_>()
@@ -595,10 +598,8 @@ module Application =
     let graph = ApplicationGraph()
     let mutable visualizer : IVisualizer = NullVisualizer()
 
-    let getMethod (m : MethodBase) : Method =        
-        let method = Dict.getValueOrUpdate methods m (fun () -> Method(m))
-        if method.HasBody then graph.RegisterMethod method
-        method
+    let getMethod (m : MethodBase) : Method =
+        Dict.getValueOrUpdate methods m (fun () -> Method(m))
 
     let setVisualizer (v : IVisualizer) =
         visualizer <- v
@@ -611,8 +612,6 @@ module Application =
     let moveState fromLoc toState forked =
         graph.MoveState fromLoc toState
         graph.AddForkedStates toState forked
-        let d = graph.GetDistanceToNearestGoal (seq {yield toState; yield! forked})
-        Logger.trace $"Distances: %A{Seq.length d}"
         visualizer.VisualizeStep fromLoc toState forked
 
     let terminateState state =

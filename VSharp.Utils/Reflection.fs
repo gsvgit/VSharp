@@ -128,8 +128,18 @@ module public Reflection =
 
     let getAllMethods (t : Type) = t.GetMethods(allBindingFlags)
 
+    let getMethodDescriptor (m : MethodBase) =
+        let declaringType = m.DeclaringType
+        let declaringTypeVars =
+            if declaringType.IsGenericType then declaringType.GetGenericArguments() |> Array.map (fun t -> t.TypeHandle.Value)
+            else [||]
+        let methodVars =
+            if m.IsGenericMethod then m.GetGenericArguments() |> Array.map (fun t -> t.TypeHandle.Value)
+            else [||]
+        m.MethodHandle.Value, declaringTypeVars, methodVars
+
     let compareMethods (m1 : MethodBase) (m2 : MethodBase) =
-        compare m1.MethodHandle.Value m2.MethodHandle.Value
+        compare (getMethodDescriptor m1) (getMethodDescriptor m2)
 
     // ----------------------------------- Creating objects ----------------------------------
 
