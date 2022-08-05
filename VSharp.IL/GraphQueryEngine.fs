@@ -341,7 +341,7 @@ type GraphQueryEngine() as this =
         res
 
     member this.PopHistoryStep (startVertex:StartVertex) =
-        //getQuery().ToDot "rsm_pop.dot"
+        //getQuery().ToDot "rsm_arithm_pop.dot"
         match startVertex.HistorySpecificRSMState with
         | Some specificPoint ->
             let outgoingEdges = historyRsmBox.OutgoingEdges (specificPoint + 1<rsmState>) 

@@ -169,7 +169,7 @@ namespace VSharp.Test
                 }
                 catch (Exception e)
                 {
-                    context.CurrentResult.SetResult(ResultState.Error, e.Message);
+                    context.CurrentResult.SetResult(ResultState.Error,  $"Message: %s{e.Message} \n Stack trace: %s{e.StackTrace}");
                 }
 
                 return context.CurrentResult;

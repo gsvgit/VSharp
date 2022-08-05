@@ -3,7 +3,7 @@ namespace VSharp
 open global.System
 open System.Reflection
 open System.Collections.Generic
-open System
+//open System
 
 //open CFPQ_GLL
 //open CFPQ_GLL.GLL
@@ -486,28 +486,38 @@ type ApplicationGraph() as this =
                         existingCalls.Clear()
                         codeLocationToVertex.Clear()
                     | RegisterMethod method ->
+                        Logger.trace "1"
                         registerMethod method
                     | AddCallEdge (_from, _to) ->
+                        Logger.trace "2"
                         //registerMethod _from.method 
                         //registerMethod _to.method                        
                         addCallEdge _from _to
                         //toDot "cfg.dot"
                     | AddGoals positions ->
+                        Logger.trace "3"
                         positions
                         |> Array.map getVertexByCodeLocation 
                         |> queryEngine.AddFinalVertices 
                     | RemoveGoal pos ->
+                        Logger.trace "4"
                         getVertexByCodeLocation pos
                         |> queryEngine.RemoveFinalVertex
-                    | SpawnStates states -> Array.ofSeq states |> addStates None
+                    | SpawnStates states ->
+                        Logger.trace "5"
+                        Array.ofSeq states |> addStates None
+                        
                     | AddForkedStates (parentState, forkedStates) ->
+                        Logger.trace "6"
                         addStates (Some parentState) (Array.ofSeq forkedStates)
                     | MoveState (_from,_to) ->
                         Logger.trace $"Moved: %A{getVertexByCodeLocation _from} -> %A{getVertexByCodeLocation _to.CodeLocation}"                            
                         moveState _from _to
                     | GetShortestDistancesToGoals (replyChannel, states) ->
+                        Logger.trace "7"
                         replyChannel.Reply (getShortestDistancesToGoals states)
                     | GetDistanceToNearestGoal (replyChannel, states) ->
+                        Logger.trace "8"
                         let result =
                             states
                             |> Seq.choose (fun state ->
@@ -532,8 +542,8 @@ type ApplicationGraph() as this =
             )
 
     member this.RegisterMethod (method: Method) =
-        if method.HasBody 
-        then messagesProcessor.Post (RegisterMethod method)
+        //if method.HasBody 
+        messagesProcessor.Post (RegisterMethod method)
 
     member this.AddCallEdge (sourceLocation : codeLocation) (targetLocation : codeLocation) =
         messagesProcessor.Post <| AddCallEdge (sourceLocation, targetLocation)
@@ -598,8 +608,10 @@ module Application =
     let graph = ApplicationGraph()
     let mutable visualizer : IVisualizer = NullVisualizer()
 
-    let getMethod (m : MethodBase) : Method =
-        Dict.getValueOrUpdate methods m (fun () -> Method(m))
+    let getMethod (m : MethodBase) : Method =        
+        let method = Dict.getValueOrUpdate methods m (fun () -> Method(m))
+        //if method.HasBody then graph.RegisterMethod method
+        method
 
     let setVisualizer (v : IVisualizer) =
         visualizer <- v
@@ -612,6 +624,8 @@ module Application =
     let moveState fromLoc toState forked =
         graph.MoveState fromLoc toState
         graph.AddForkedStates toState forked
+        //let d = graph.GetDistanceToNearestGoal (seq {yield toState; yield! forked})
+        //Logger.trace $"Distances: %A{Seq.length d}"
         visualizer.VisualizeStep fromLoc toState forked
 
     let terminateState state =
@@ -626,5 +640,5 @@ module Application =
     do
         MethodWithBody.InstantiateNew <- fun m -> getMethod m :> MethodWithBody
         Method.ReportCFGLoaded <- fun m ->
-            graph.RegisterMethod m
+            //graph.RegisterMethod m
             let added = _loadedMethods.Add(m) in assert added
