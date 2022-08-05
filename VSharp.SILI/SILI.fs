@@ -193,6 +193,7 @@ type public SILI(options : SiliOptions) =
 
     member private x.AnswerPobs entryPoint initialStates =
         Application.graph.ResetQueryEngine()
+        Application.graph.RegisterMethod entryPoint
         statistics.ExplorationStarted()
         branchesReleased <- false
         let mainPobs = coveragePobsForMethod entryPoint |> Seq.filter (fun pob -> pob.loc.offset <> 0<offsets>)
