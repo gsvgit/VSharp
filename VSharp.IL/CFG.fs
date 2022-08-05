@@ -363,6 +363,8 @@ type ApplicationGraph() as this =
         queryEngine.ToDot(clusters, filePath)
                 
     let registerMethod (method:Method) =
+        if not method.HasBody
+        then Logger.trace "Attempt to register method without body."
         if not <| methodToFirstVertexIdMapping.ContainsKey method
         then
             method.CFG.SortedOffsets
@@ -407,7 +409,7 @@ type ApplicationGraph() as this =
                 |> Array.map(fun sink -> getVertexByCodeLocation {callTarget with offset = sink})
                 |> Array.map (fun returnFrom -> Edge(returnFrom, returnTo))
             queryEngine.AddCallReturnEdges (callEdge, returnEdges)
-            toDot "cfg_debug.dot"
+            //toDot "cfg_debug.dot"
         
     let moveState (initialPosition: codeLocation) (stateWithNewPosition: IGraphTrackableState) =        
         let initialVertexInInnerGraph = getVertexByCodeLocation initialPosition            
@@ -485,8 +487,8 @@ type ApplicationGraph() as this =
                     | RegisterMethod method ->
                         registerMethod method
                     | AddCallEdge (_from, _to) ->
-                        registerMethod _from.method 
-                        registerMethod _to.method                        
+                        //registerMethod _from.method 
+                        //registerMethod _to.method                        
                         addCallEdge _from _to
                         //toDot "cfg.dot"
                     | AddGoals positions ->
@@ -500,7 +502,7 @@ type ApplicationGraph() as this =
                     | AddForkedStates (parentState, forkedStates) ->
                         addStates (Some parentState) (Array.ofSeq forkedStates)
                     | MoveState (_from,_to) ->
-                        registerMethod _to.CodeLocation.method                            
+                        Logger.trace $"Moved: %A{getVertexByCodeLocation _from} -> %A{getVertexByCodeLocation _to.CodeLocation}"                            
                         moveState _from _to
                     | GetShortestDistancesToGoals (replyChannel, states) ->
                         replyChannel.Reply (getShortestDistancesToGoals states)
@@ -595,7 +597,7 @@ module Application =
 
     let getMethod (m : MethodBase) : Method =        
         let method = Dict.getValueOrUpdate methods m (fun () -> Method(m))
-        //graph.RegisterMethod method
+        if method.HasBody then graph.RegisterMethod method
         method
 
     let setVisualizer (v : IVisualizer) =
@@ -609,6 +611,8 @@ module Application =
     let moveState fromLoc toState forked =
         graph.MoveState fromLoc toState
         graph.AddForkedStates toState forked
+        let d = graph.GetDistanceToNearestGoal (seq {yield toState; yield! forked})
+        Logger.trace $"Distances: %A{Seq.length d}"
         visualizer.VisualizeStep fromLoc toState forked
 
     let terminateState state =
