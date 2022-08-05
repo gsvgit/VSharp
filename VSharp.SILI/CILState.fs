@@ -1,6 +1,5 @@
 namespace VSharp.Interpreter.IL
 
-open System.Runtime.InteropServices
 open VSharp
 open System.Text
 open System.Collections.Generic

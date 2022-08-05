@@ -43,7 +43,7 @@ type internal CfgTemporaryData (method : MethodWithBody) =
     let loopEntries = HashSet<offset>()
     let offsetsWithSiblings = HashSet<offset>()
 
-    let dfs (startVertices : array<offset>) (exceptionHandlingEntries: array<offset>) =
+    let dfs (startVertices : array<offset>) (*exceptionHandlingEntries: array<offset>*) =
         let used = HashSet<offset>()
         let verticesOffsets = HashSet<offset> startVertices
         let addVertex v = verticesOffsets.Add v |> ignore
@@ -133,9 +133,10 @@ type internal CfgTemporaryData (method : MethodWithBody) =
                 | FallThrough offset ->
                     currentBasicBlock.AddVertex offset
                     dfs' currentBasicBlock offset
-                | ExceptionMechanism ->                    
-                    currentBasicBlock.FinalVertex <- currentVertex
-                    addEdge currentBasicBlock.StartVertex currentVertex
+                | ExceptionMechanism ->
+                    ()
+                    //currentBasicBlock.FinalVertex <- currentVertex
+                    //addEdge currentBasicBlock.StartVertex currentVertex
                     //TODO fix it
                     //if exceptionHandlingEntries.Length > 0
                     //then exceptionHandlingEntries |> Array.iter (fun offset -> calls.Add(CallInfo(currentVertex, offset)))
@@ -176,21 +177,23 @@ type internal CfgTemporaryData (method : MethodWithBody) =
         distFromNode)
 
     do
-        let exceptionHandlingEntries =
+        let startVertices =
             [|
-                for handler in exceptionHandlers do
+             yield 0<offsets>
+             for handler in exceptionHandlers do
                  yield handler.handlerOffset
                  match handler.ehcType with
                  | ehcType.Filter offset -> yield offset
                  | _ -> ()
             |]
-        let startVertices =
-            [|
-             yield 0<offsets>
-             yield! exceptionHandlingEntries
-            |]
-        
-        dfs startVertices exceptionHandlingEntries
+
+        dfs startVertices
+        sortedOffsets |> Seq.iter (fun bb ->
+            if edges.ContainsKey bb then
+                let outgoing = edges.[bb]
+                if outgoing.Count > 1 then
+                    offsetsWithSiblings.UnionWith outgoing
+            else edges.Add(bb, HashSet<_>()))
         
         //TODO fix it
         //if sinks.Count > 0
@@ -486,38 +489,38 @@ type ApplicationGraph() as this =
                         existingCalls.Clear()
                         codeLocationToVertex.Clear()
                     | RegisterMethod method ->
-                        Logger.trace "1"
+                        //Logger.trace "1"
                         registerMethod method
                     | AddCallEdge (_from, _to) ->
-                        Logger.trace "2"
+                        //Logger.trace "2"
                         //registerMethod _from.method 
                         //registerMethod _to.method                        
                         addCallEdge _from _to
                         //toDot "cfg.dot"
                     | AddGoals positions ->
-                        Logger.trace "3"
+                        //Logger.trace "3"
                         positions
                         |> Array.map getVertexByCodeLocation 
                         |> queryEngine.AddFinalVertices 
                     | RemoveGoal pos ->
-                        Logger.trace "4"
+                        //Logger.trace "4"
                         getVertexByCodeLocation pos
                         |> queryEngine.RemoveFinalVertex
                     | SpawnStates states ->
-                        Logger.trace "5"
+                        //Logger.trace "5"
                         Array.ofSeq states |> addStates None
                         
                     | AddForkedStates (parentState, forkedStates) ->
-                        Logger.trace "6"
+                        //Logger.trace "6"
                         addStates (Some parentState) (Array.ofSeq forkedStates)
                     | MoveState (_from,_to) ->
-                        Logger.trace $"Moved: %A{getVertexByCodeLocation _from} -> %A{getVertexByCodeLocation _to.CodeLocation}"                            
+                        //Logger.trace $"Moved: %A{getVertexByCodeLocation _from} -> %A{getVertexByCodeLocation _to.CodeLocation}"                            
                         moveState _from _to
                     | GetShortestDistancesToGoals (replyChannel, states) ->
-                        Logger.trace "7"
+                        //Logger.trace "7"
                         replyChannel.Reply (getShortestDistancesToGoals states)
                     | GetDistanceToNearestGoal (replyChannel, states) ->
-                        Logger.trace "8"
+                        //Logger.trace "8"
                         let result =
                             states
                             |> Seq.choose (fun state ->
@@ -610,7 +613,7 @@ module Application =
 
     let getMethod (m : MethodBase) : Method =        
         let method = Dict.getValueOrUpdate methods m (fun () -> Method(m))
-        //if method.HasBody then graph.RegisterMethod method
+        if method.HasBody then graph.RegisterMethod method
         method
 
     let setVisualizer (v : IVisualizer) =
@@ -624,8 +627,8 @@ module Application =
     let moveState fromLoc toState forked =
         graph.MoveState fromLoc toState
         graph.AddForkedStates toState forked
-        //let d = graph.GetDistanceToNearestGoal (seq {yield toState; yield! forked})
-        //Logger.trace $"Distances: %A{Seq.length d}"
+        let d = graph.GetDistanceToNearestGoal (seq {yield toState; yield! forked})
+        Logger.trace $"Distances: %A{d |> Seq.map snd}"
         visualizer.VisualizeStep fromLoc toState forked
 
     let terminateState state =

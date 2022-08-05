@@ -120,11 +120,9 @@ module public Reflection =
         m.IsStatic && m.Name = ".cctor"
 
     let isExternalMethod (methodBase : MethodBase) =
-        let hasExternalRelatedFlags =
-            methodBase.GetMethodImplementationFlags()
-            &&& (MethodImplAttributes.InternalCall ||| MethodImplAttributes.Unmanaged) 
+        let isInternalCall = methodBase.GetMethodImplementationFlags() &&& MethodImplAttributes.InternalCall
         let isPInvokeImpl = methodBase.Attributes.HasFlag(MethodAttributes.PinvokeImpl)
-        int hasExternalRelatedFlags <> 0 || isPInvokeImpl
+        int isInternalCall <> 0 || isPInvokeImpl
 
     let getAllMethods (t : Type) = t.GetMethods(allBindingFlags)
 
