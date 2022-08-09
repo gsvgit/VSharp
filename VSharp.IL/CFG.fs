@@ -14,10 +14,20 @@ type internal temporaryCallInfo = {callee: MethodWithBody; callFrom: offset; ret
 
 type BasicBlock (method: MethodWithBody, startOffset: offset) =
     inherit InputGraphVertexBase ()    
-    let mutable finalOffset = None       
+    let mutable finalOffset = None
+    let incomingEdges = HashSet<BasicBlock>()
     member this.StartOffset = startOffset
     member this.Method = method
     member this.OutgoingEdges = (this :> InputGraphVertexBase :> IInputGraphVertex).OutgoingEdges
+    member this.IncomingEdges = incomingEdges
+    member this.HasSiblings
+        with get () =
+            let siblings = HashSet<IInputGraphVertex>()
+            for bb in incomingEdges do
+                for kvp in bb.OutgoingEdges do
+                    siblings.UnionWith kvp.Value
+            siblings.Count > 1
+
     member this.FinalOffset
         with get () =
                 match finalOffset with
@@ -34,16 +44,27 @@ type BasicBlock (method: MethodWithBody, startOffset: offset) =
                 yield ILRewriter.PrintILInstr None None method.MethodBase instr
                 instr <- instr.next
         }
-type internal CfgTemporaryData (method : MethodWithBody) =
+
+[<Struct>]
+type CallInfo =
+    val Callee: Method
+    val CallFrom: offset
+    val ReturnTo: offset
+    new (callee, callFrom, returnTo) =
+        {
+            Callee = callee
+            CallFrom = callFrom
+            ReturnTo = returnTo
+        }
+
+and CfgInfo internal (method : MethodWithBody) =
     let () = assert method.HasBody    
     let ilBytes = method.ILBytes
     let exceptionHandlers = method.ExceptionHandlers
-    let sortedOffsets = ResizeArray<BasicBlock>()
-    //let edges = Dictionary<offset, HashSet<offset>>()
+    let sortedBasicBlocks = ResizeArray<BasicBlock>()    
     let sinks = ResizeArray<_>()
-    let calls = ResizeArray<temporaryCallInfo>()
+    let calls = Dictionary<_,_>()
     let loopEntries = HashSet<offset>()
-    let offsetsWithSiblings = HashSet<offset>()
     let terminalForCFGEdge = 0<terminalSymbol>
 
     let dfs (startVertices : array<offset>) (*exceptionHandlingEntries: array<offset>*) =
@@ -83,6 +104,8 @@ type internal CfgTemporaryData (method : MethodWithBody) =
         let addEdge (src:BasicBlock) (dst:BasicBlock) =
             let srcGraphVertex = src :> InputGraphVertexBase :> IInputGraphVertex
             let dstGraphVertex = dst :> InputGraphVertexBase :> IInputGraphVertex
+            let added = dst.IncomingEdges.Add src
+            assert added
             let exists, edges = srcGraphVertex.OutgoingEdges.TryGetValue terminalForCFGEdge 
             if exists
             then
@@ -96,9 +119,7 @@ type internal CfgTemporaryData (method : MethodWithBody) =
             vertexToBasicBlock.[int currentVertex] <- Some currentBasicBlock
 
             if used.Contains currentVertex
-            then
-                //currentBasicBlock.FinalVertex <- currentVertex
-                //addEdge currentBasicBlock.StartVertex currentVertex
+            then                
                 if greyVertices.Contains currentVertex
                 then loopEntries.Add currentVertex |> ignore
             else
@@ -107,14 +128,12 @@ type internal CfgTemporaryData (method : MethodWithBody) =
                 let opCode = MethodBody.parseInstruction method currentVertex
 
                 let dealWithJump srcBasicBlock dst =
-                    //addVertex src
-                    //addVertex dst
                     let newBasicBlock = makeNewBasicBlock dst 
                     addEdge srcBasicBlock newBasicBlock
                     dfs' newBasicBlock  dst
 
-                let processCall callee callFrom returnTo =
-                    calls.Add({callee=callee; callFrom=callFrom; returnTo=returnTo})
+                let processCall (callee: MethodWithBody) callFrom returnTo =
+                    calls.Add(callFrom, CallInfo(callee :?> Method, callFrom, returnTo)) 
                     currentBasicBlock.FinalOffset <- callFrom
                     let newBasicBlock = makeNewBasicBlock returnTo 
                     addEdge currentBasicBlock newBasicBlock
@@ -125,10 +144,10 @@ type internal CfgTemporaryData (method : MethodWithBody) =
                 match ipTransition with
                 | FallThrough offset when MethodBody.isDemandingCallOpCode opCode ->
                     let opCode', calleeBase = method.ParseCallSite currentVertex
-                    assert(opCode' = opCode)
+                    assert (opCode' = opCode)
                     let callee = MethodWithBody.InstantiateNew calleeBase
-                    if callee.HasBody then
-                        processCall callee currentVertex offset
+                    if callee.HasBody
+                    then processCall callee currentVertex offset
                     else
                         currentBasicBlock.FinalOffset <- offset
                         dfs' currentBasicBlock offset
@@ -137,24 +156,14 @@ type internal CfgTemporaryData (method : MethodWithBody) =
                     dfs' currentBasicBlock offset
                 | ExceptionMechanism ->
                     ()
-                    //currentBasicBlock.FinalVertex <- currentVertex
-                    //addEdge currentBasicBlock.StartVertex currentVertex
-                    //TODO fix it
-                    //if exceptionHandlingEntries.Length > 0
-                    //then exceptionHandlingEntries |> Array.iter (fun offset -> calls.Add(CallInfo(currentVertex, offset)))
-                    //else attachToAnySink.Add currentVertex
                 | Return ->
-                    //addVertex currentVertex
-                    sinks.Add currentVertex
+                    sinks.Add currentBasicBlock
                     currentBasicBlock.FinalOffset <- currentVertex
-                    //addEdge currentBasicBlock.StartVertex currentVertex
                 | UnconditionalBranch target ->
                     currentBasicBlock.FinalOffset <- currentVertex
-                    //addEdge currentBasicBlock.StartVertex currentVertex
                     dealWithJump currentBasicBlock target
                 | ConditionalBranch (fallThrough, offsets) ->
                     currentBasicBlock.FinalOffset <- currentVertex
-                    //addEdge currentBasicBlock.StartVertex currentVertex
                     dealWithJump currentBasicBlock fallThrough
                     offsets |> List.iter (dealWithJump currentBasicBlock)
 
@@ -165,7 +174,7 @@ type internal CfgTemporaryData (method : MethodWithBody) =
 
         basicBlocks
         |> Seq.sortBy (fun b -> b.StartOffset)
-        |> Seq.iter sortedOffsets.Add
+        |> Seq.iter sortedBasicBlocks.Add
 
     let cfgDistanceFrom = GraphUtils.distanceCache<offset>()
 
@@ -177,54 +186,7 @@ type internal CfgTemporaryData (method : MethodWithBody) =
             if i.Value <> GraphUtils.infinity then
                 distFromNode.Add(i.Key, i.Value)
         distFromNode)
-
-    do
-        let startVertices =
-            [|
-             yield 0<offsets>
-             for handler in exceptionHandlers do
-                 yield handler.handlerOffset
-                 match handler.ehcType with
-                 | ehcType.Filter offset -> yield offset
-                 | _ -> ()
-            |]
-
-        dfs startVertices
-        (*
-        sortedOffsets |> Seq.iter (fun bb ->
-            if edges.ContainsKey bb then
-                let outgoing = edges.[bb]
-                if outgoing.Count > 1 then
-                    offsetsWithSiblings.UnionWith outgoing
-            else edges.Add(bb, HashSet<_>()))
-        *)
-        //TODO fix it
-        //if sinks.Count > 0
-        //then attachToAnySink |> ResizeArray.iter (fun offset -> calls.Add (CallInfo(offset, sinks.[0])))
-        
-    //member this.MethodBase = methodBase
-    member this.ILBytes = ilBytes
-    member this.SortedOffsets = sortedOffsets
-    //member this.Edges = edges
-    member this.Calls = calls
-    member this.Sinks = sinks.ToArray()
-    member this.LoopEntries = loopEntries
-    member this.BlocksWithSiblings = offsetsWithSiblings
-    member this.DistancesFrom offset = findDistanceFrom offset
-
-[<Struct>]
-type CallInfo =
-    val Callee: Method
-    val CallFrom: offset
-    val ReturnTo: offset
-    new (callee, callFrom, returnTo) =
-        {
-            Callee = callee
-            CallFrom = callFrom
-            ReturnTo = returnTo
-        }
-
-and CfgInfo internal (cfg : CfgTemporaryData) =
+    
     let resolveBasicBlockIndex offset =
         let rec binSearch (sortedOffsets : ResizeArray<BasicBlock>) offset l r =
             if l >= r then l
@@ -238,23 +200,24 @@ and CfgInfo internal (cfg : CfgTemporaryData) =
                     then binSearch sortedOffsets offset (mid + 1) r
                     else binSearch sortedOffsets offset l (mid - 1)
 
-        binSearch cfg.SortedOffsets offset 0 (cfg.SortedOffsets.Count - 1)
+        binSearch sortedBasicBlocks offset 0 (sortedBasicBlocks.Count - 1)
 
-    let resolveBasicBlock offset = cfg.SortedOffsets.[resolveBasicBlockIndex offset]
+    let resolveBasicBlock offset = sortedBasicBlocks.[resolveBasicBlockIndex offset]
 
-    let sinks = cfg.Sinks |> Array.map resolveBasicBlock
-    let loopEntries = cfg.LoopEntries
-    let calls =
-        let res = Dictionary<_,_>()
-        cfg.Calls
-        |> ResizeArray.iter (fun tmpCallInfo ->
-            let callInfo = CallInfo(tmpCallInfo.callee :?> Method, tmpCallInfo.callFrom, tmpCallInfo.returnTo)
-            res.Add(tmpCallInfo.callFrom, callInfo))
-        res
+    do
+        let startVertices =
+            [|
+             yield 0<offsets>
+             for handler in exceptionHandlers do
+                 yield handler.handlerOffset
+                 match handler.ehcType with
+                 | ehcType.Filter offset -> yield offset
+                 | _ -> ()
+            |]
 
-    member this.IlBytes = cfg.ILBytes
-    member this.SortedBasicBlocks = cfg.SortedOffsets
-    //member this.Edges = cfg.Edges
+        dfs startVertices
+    
+    member this.SortedBasicBlocks = sortedBasicBlocks
     member this.Sinks = sinks
     member this.Calls = calls
     member this.IsLoopEntry offset = loopEntries.Contains offset
@@ -264,18 +227,20 @@ and CfgInfo internal (cfg : CfgTemporaryData) =
     // Returns dictionary of shortest distances, in terms of basic blocks (1 step = 1 basic block transition)
     member this.DistancesFrom offset =
         let bb = resolveBasicBlock offset
-        cfg.DistancesFrom bb.StartOffset
+        findDistanceFrom bb.StartOffset
     member this.HasSiblings offset =
-        this.IsBasicBlockStart offset && cfg.BlocksWithSiblings.Contains offset
+        let basicBlock = resolveBasicBlock offset
+        basicBlock.StartOffset = offset
+        && basicBlock.HasSiblings
 
 and Method internal (m : MethodBase) as this =
     inherit MethodWithBody(m)
     let cfg = lazy(
         if this.HasBody then
             Logger.trace $"Add CFG for {this}."
-            let cfg = CfgTemporaryData this
+            //let cfg = CfgTemporaryData this
             Method.ReportCFGLoaded this
-            cfg |> CfgInfo |> Some
+            this |> CfgInfo |> Some
         else None)
 
     member this.IsStaticConstructor = Reflection.isStaticConstructor m
@@ -288,25 +253,6 @@ and Method internal (m : MethodBase) as this =
     // Helps resolving cyclic dependencies between Application and MethodWithBody
     [<DefaultValue>] static val mutable private cfgReporter : Method -> unit
     static member internal ReportCFGLoaded with get() = Method.cfgReporter and set v = Method.cfgReporter <- v
-
-    // Returns a sequence of strings, one per instruction in basic block
-    (*member x.BasicBlockToString (offset : offset) : string seq =
-        let cfg = x.CFG
-        let idx = cfg.ResolveBasicBlockIndex offset
-        let offset = cfg.SortedOffsets.[idx]
-        let parsedInstrs = x.ParsedInstructions
-        let mutable instr = parsedInstrs |> Array.find (fun instr -> Offset.from (int instr.offset) = offset)
-        let endInstr =
-            if idx + 1 < cfg.SortedOffsets.Count then
-                let nextBBOffset = cfg.SortedOffsets.[idx + 1]
-                parsedInstrs |> Array.find (fun instr -> Offset.from (int instr.offset) = nextBBOffset)
-            else parsedInstrs.[parsedInstrs.Length - 1].next
-        seq {
-            while not <| LanguagePrimitives.PhysicalEquality instr endInstr do
-                yield ILRewriter.PrintILInstr None None x.MethodBase instr
-                instr <- instr.next
-        }
-*)
 
 [<CustomEquality; CustomComparison>]
 type public codeLocation = {offset : offset; method : Method}
@@ -345,16 +291,16 @@ type private ApplicationGraphMessage =
         of AsyncReplyChannel<seq<IGraphTrackableState * int>> * seq<IGraphTrackableState>
 
 type ApplicationGraph() as this =        
-    let mutable firstFreeVertexId = 0<inputGraphVertex>
-    let methodToFirstVertexIdMapping = Dictionary<Method,int<inputGraphVertex>>()    
-    let stateToStartVertex = Dictionary<IGraphTrackableState, StartVertex>()
-    let startVertexToStates = Dictionary<StartVertex, HashSet<IGraphTrackableState>>()
+    //let mutable firstFreeVertexId = 0<inputGraphVertex>
+    //let methodToFirstVertexIdMapping = Dictionary<Method,int<inputGraphVertex>>()    
+    //let stateToStartVertex = Dictionary<IGraphTrackableState, StartVertex>()
+    //let startVertexToStates = Dictionary<StartVertex, HashSet<IGraphTrackableState>>()
     //let cfgs = Dictionary<MethodBase, CfgInfo>()
-    let innerGraphVerticesToCodeLocationMap = ResizeArray<_>()
-    let existingCalls = HashSet<codeLocation*codeLocation>()
+    //let innerGraphVerticesToCodeLocationMap = ResizeArray<_>()
+    //let existingCalls = HashSet<codeLocation*codeLocation>()
     //let mutable queryEngine = GraphQueryEngine()
-    let codeLocationToVertex = Dictionary<codeLocation, int<inputGraphVertex>>()        
-    let getVertexByCodeLocation (pos:codeLocation) = Unchecked.defaultof<_>
+    //let codeLocationToVertex = Dictionary<codeLocation, int<inputGraphVertex>>()        
+    //let getVertexByCodeLocation (pos:codeLocation) = Unchecked.defaultof<_>
             //codeLocationToVertex.[{pos with offset = pos.method.CFG.ResolveBasicBlock pos.offset}]
         
     let toDot filePath = ()
@@ -395,8 +341,8 @@ type ApplicationGraph() as this =
     let addCallEdge (callSource:codeLocation) (callTarget:codeLocation) =   
         let callerMethodCfgInfo = callSource.method.CFG //cfgs.[callSource.method]
         let calledMethodCfgInfo = callTarget.method.CFG // cfgs.[callTarget.method]
-        let callFrom = getVertexByCodeLocation callSource
-        let callTo = getVertexByCodeLocation callTarget                    
+        //let callFrom = getVertexByCodeLocation callSource
+        //let callTo = getVertexByCodeLocation callTarget                    
         ()
         (*
         if not <| existingCalls.Contains (callSource, callTarget)
@@ -495,13 +441,13 @@ type ApplicationGraph() as this =
                     | ResetQueryEngine ->
                         Logger.trace "Application graph reset."
                         //queryEngine <- GraphQueryEngine ()
-                        innerGraphVerticesToCodeLocationMap.Clear()
-                        firstFreeVertexId <- 0<inputGraphVertex>
-                        methodToFirstVertexIdMapping.Clear()
-                        stateToStartVertex.Clear()
-                        startVertexToStates.Clear()                        
-                        existingCalls.Clear()
-                        codeLocationToVertex.Clear()
+                        //innerGraphVerticesToCodeLocationMap.Clear()
+                        //firstFreeVertexId <- 0<inputGraphVertex>
+                        //methodToFirstVertexIdMapping.Clear()
+                        //stateToStartVertex.Clear()
+                        //startVertexToStates.Clear()                        
+                        //existingCalls.Clear()
+                        //codeLocationToVertex.Clear()
                     | RegisterMethod method ->
                         //Logger.trace "1"
                         registerMethod method
@@ -604,8 +550,6 @@ type ApplicationGraph() as this =
     member this.ResetQueryEngine() =
         messagesProcessor.Post ResetQueryEngine
 
-
-
 type IVisualizer =
     abstract AddState : IGraphTrackableState -> unit
     abstract TerminateState : IGraphTrackableState -> unit
@@ -618,8 +562,6 @@ type NullVisualizer() =
         override x.TerminateState _ = ()
         override x.VisualizeGraph () = ()
         override x.VisualizeStep _ _ _ = ()
-
-
 
 module Application =
     let private methods = Dictionary<MethodBase, Method>()
