@@ -1,103 +1,104 @@
 namespace VSharp
 
+open CFPQ_GLL.Common
 open global.System
 open System.Reflection
 open System.Collections.Generic
-//open System
-
-//open CFPQ_GLL
-//open CFPQ_GLL.GLL
-//open CFPQ_GLL.GSS
 open CFPQ_GLL.InputGraph
-//open CFPQ_GLL.RSM
-//open CFPQ_GLL.SPPF
 open FSharpx.Collections
 open Microsoft.FSharp.Collections
 open VSharp
 
-
 [<Struct>]
 type internal temporaryCallInfo = {callee: MethodWithBody; callFrom: offset; returnTo: offset}
 
-type private BasicBlock (startVertex: offset) =
-    let innerVertices = ResizeArray<offset>()
-    let mutable finalVertex = None
-    member this.StartVertex = startVertex
-    member this.InnerVertices with get () = innerVertices
-    member this.AddVertex v = innerVertices.Add v
-    member this.FinalVertex
+type BasicBlock (method: MethodWithBody, startOffset: offset) =
+    inherit InputGraphVertexBase ()    
+    let mutable finalOffset = None       
+    member this.StartOffset = startOffset
+    member this.Method = method
+    member this.OutgoingEdges = (this :> InputGraphVertexBase :> IInputGraphVertex).OutgoingEdges
+    member this.FinalOffset
         with get () =
-                match finalVertex with
+                match finalOffset with
                 | Some v -> v
                 | None -> failwith "Final vertex of this basic block is not specified yet."
-        and set v = finalVertex <- Some v
-
+        and set (v: offset) = finalOffset <- Some v
+        
+    member this.ToString () =
+        let parsedInstructions = method.ParsedInstructions
+        let mutable instr = parsedInstructions |> Array.find (fun instr -> Offset.from (int instr.offset) = this.StartOffset)
+        let endInstr = parsedInstructions |> Array.find (fun instr -> Offset.from (int instr.offset) = this.FinalOffset)            
+        seq {
+            while not <| LanguagePrimitives.PhysicalEquality instr endInstr do
+                yield ILRewriter.PrintILInstr None None method.MethodBase instr
+                instr <- instr.next
+        }
 type internal CfgTemporaryData (method : MethodWithBody) =
-    let () = assert method.HasBody
+    let () = assert method.HasBody    
     let ilBytes = method.ILBytes
     let exceptionHandlers = method.ExceptionHandlers
-    let sortedOffsets = ResizeArray<offset>()
-    let edges = Dictionary<offset, HashSet<offset>>()
+    let sortedOffsets = ResizeArray<BasicBlock>()
+    //let edges = Dictionary<offset, HashSet<offset>>()
     let sinks = ResizeArray<_>()
     let calls = ResizeArray<temporaryCallInfo>()
     let loopEntries = HashSet<offset>()
     let offsetsWithSiblings = HashSet<offset>()
+    let terminalForCFGEdge = 0<terminalSymbol>
 
     let dfs (startVertices : array<offset>) (*exceptionHandlingEntries: array<offset>*) =
         let used = HashSet<offset>()
-        let verticesOffsets = HashSet<offset> startVertices
-        let addVertex v = verticesOffsets.Add v |> ignore
+        let basicBlocks = HashSet<BasicBlock> (Array.map (fun v -> BasicBlock(method,v)) startVertices)
+        let addBasicBlock v = basicBlocks.Add v |> ignore
         let greyVertices = HashSet<offset>()
-        let vertexToBasicBloc: array<Option<BasicBlock>> = Array.init ilBytes.Length (fun _ -> None)
-
-        let splitEdge edgeStart edgeFinal intermediatePoint =
-            let isRemoved = edges.[edgeStart].Remove edgeFinal
-            assert isRemoved
-            let isAdded = edges.[edgeStart].Add intermediatePoint
-            assert isAdded
-            edges.Add(intermediatePoint, HashSet<_>[|edgeFinal|])
+        let vertexToBasicBlock: array<Option<BasicBlock>> = Array.init ilBytes.Length (fun _ -> None)
 
         let splitBasicBlock (block:BasicBlock) intermediatePoint =
-            let newBlock = BasicBlock(intermediatePoint)
-            newBlock.FinalVertex <- block.FinalVertex
-            let tmp = ResizeArray block.InnerVertices
-            for v in tmp do
-                if v > intermediatePoint
-                then
-                    let isRemoved = block.InnerVertices.Remove v
-                    assert isRemoved
-                    newBlock.AddVertex v
-                    vertexToBasicBloc.[int v] <- Some newBlock
-            block.FinalVertex <- intermediatePoint
-            let isRemoved = block.InnerVertices.Remove intermediatePoint
-            assert isRemoved
+            let newBlock = BasicBlock (method, intermediatePoint)
+            newBlock.FinalOffset <- block.FinalOffset            
+            for v in int intermediatePoint .. int block.FinalOffset  do
+                vertexToBasicBlock.[v] <- Some newBlock
+            block.FinalOffset <- intermediatePoint
+            let finalVertex =
+                (vertexToBasicBlock |> Array.findIndexBack (fun b -> b.IsSome && b.Value = block))
+                 * 1<offsets>
+            block.FinalOffset <- finalVertex
+            for kvp in block.OutgoingEdges do
+                newBlock.OutgoingEdges.Add(kvp.Key, kvp.Value)
+            block.OutgoingEdges.Clear()
+            block.OutgoingEdges.Add(terminalForCFGEdge, HashSet[|newBlock :> InputGraphVertexBase :> IInputGraphVertex|])
+            newBlock
+            
+        let makeNewBasicBlock startVertex =
+            match vertexToBasicBlock.[int startVertex] with
+            | None ->
+                let newBasicBlock = BasicBlock (method, startVertex)
+                addBasicBlock newBasicBlock
+                newBasicBlock
+            | Some block ->
+                if block.StartOffset = startVertex
+                then block
+                else splitBasicBlock block startVertex
 
-        let addEdge src dst =
-            addVertex src
-            addVertex dst
-            if src <> dst
+        let addEdge (src:BasicBlock) (dst:BasicBlock) =
+            let srcGraphVertex = src :> InputGraphVertexBase :> IInputGraphVertex
+            let dstGraphVertex = dst :> InputGraphVertexBase :> IInputGraphVertex
+            let exists, edges = srcGraphVertex.OutgoingEdges.TryGetValue terminalForCFGEdge 
+            if exists
             then
-                let exists,outgoingEdges = edges.TryGetValue src
-                if exists
-                then outgoingEdges.Add dst |> ignore
-                else edges.Add(src, HashSet [|dst|])
-                match vertexToBasicBloc.[int dst] with
-                | None -> ()
-                | Some block ->
-                    if block.InnerVertices.Contains dst && block.FinalVertex <> dst
-                    then
-                        splitEdge block.StartVertex block.FinalVertex dst
-                        splitBasicBlock block dst
-
+                let added = edges.Add dstGraphVertex
+                assert added
+            else
+                srcGraphVertex.OutgoingEdges.Add(terminalForCFGEdge, HashSet [|dstGraphVertex|])
 
         let rec dfs' (currentBasicBlock : BasicBlock) (currentVertex : offset) =
 
-            vertexToBasicBloc.[int currentVertex] <- Some currentBasicBlock
+            vertexToBasicBlock.[int currentVertex] <- Some currentBasicBlock
 
             if used.Contains currentVertex
             then
-                currentBasicBlock.FinalVertex <- currentVertex
-                addEdge currentBasicBlock.StartVertex currentVertex
+                //currentBasicBlock.FinalVertex <- currentVertex
+                //addEdge currentBasicBlock.StartVertex currentVertex
                 if greyVertices.Contains currentVertex
                 then loopEntries.Add currentVertex |> ignore
             else
@@ -105,18 +106,19 @@ type internal CfgTemporaryData (method : MethodWithBody) =
                 used.Add currentVertex |> ignore
                 let opCode = MethodBody.parseInstruction method currentVertex
 
-                let dealWithJump src dst =
-                    addVertex src
-                    addVertex dst
-                    addEdge src dst
-                    dfs' (BasicBlock dst)  dst
+                let dealWithJump srcBasicBlock dst =
+                    //addVertex src
+                    //addVertex dst
+                    let newBasicBlock = makeNewBasicBlock dst 
+                    addEdge srcBasicBlock newBasicBlock
+                    dfs' newBasicBlock  dst
 
                 let processCall callee callFrom returnTo =
                     calls.Add({callee=callee; callFrom=callFrom; returnTo=returnTo})
-                    currentBasicBlock.FinalVertex <- currentVertex
-                    addEdge currentBasicBlock.StartVertex currentVertex
-                    addEdge callFrom returnTo
-                    dfs' (BasicBlock returnTo) returnTo
+                    currentBasicBlock.FinalOffset <- callFrom
+                    let newBasicBlock = makeNewBasicBlock returnTo 
+                    addEdge currentBasicBlock newBasicBlock
+                    dfs' newBasicBlock returnTo
 
                 let ipTransition = MethodBody.findNextInstructionOffsetAndEdges opCode ilBytes currentVertex
 
@@ -128,10 +130,10 @@ type internal CfgTemporaryData (method : MethodWithBody) =
                     if callee.HasBody then
                         processCall callee currentVertex offset
                     else
-                        currentBasicBlock.AddVertex offset
+                        currentBasicBlock.FinalOffset <- offset
                         dfs' currentBasicBlock offset
                 | FallThrough offset ->
-                    currentBasicBlock.AddVertex offset
+                    currentBasicBlock.FinalOffset <- offset
                     dfs' currentBasicBlock offset
                 | ExceptionMechanism ->
                     ()
@@ -142,34 +144,34 @@ type internal CfgTemporaryData (method : MethodWithBody) =
                     //then exceptionHandlingEntries |> Array.iter (fun offset -> calls.Add(CallInfo(currentVertex, offset)))
                     //else attachToAnySink.Add currentVertex
                 | Return ->
-                    addVertex currentVertex
+                    //addVertex currentVertex
                     sinks.Add currentVertex
-                    currentBasicBlock.FinalVertex <- currentVertex
-                    addEdge currentBasicBlock.StartVertex currentVertex
+                    currentBasicBlock.FinalOffset <- currentVertex
+                    //addEdge currentBasicBlock.StartVertex currentVertex
                 | UnconditionalBranch target ->
-                    currentBasicBlock.FinalVertex <- currentVertex
-                    addEdge currentBasicBlock.StartVertex currentVertex
-                    dealWithJump currentVertex target
+                    currentBasicBlock.FinalOffset <- currentVertex
+                    //addEdge currentBasicBlock.StartVertex currentVertex
+                    dealWithJump currentBasicBlock target
                 | ConditionalBranch (fallThrough, offsets) ->
-                    currentBasicBlock.FinalVertex <- currentVertex
-                    addEdge currentBasicBlock.StartVertex currentVertex
-                    dealWithJump currentVertex fallThrough
-                    offsets |> List.iter (dealWithJump currentVertex)
+                    currentBasicBlock.FinalOffset <- currentVertex
+                    //addEdge currentBasicBlock.StartVertex currentVertex
+                    dealWithJump currentBasicBlock fallThrough
+                    offsets |> List.iter (dealWithJump currentBasicBlock)
 
                 greyVertices.Remove currentVertex |> ignore
 
         startVertices
-        |> Array.iter (fun v -> dfs' (BasicBlock v) v)
+        |> Array.iter (fun v -> dfs' (BasicBlock (method,v)) v)
 
-        verticesOffsets
-        |> Seq.sort
+        basicBlocks
+        |> Seq.sortBy (fun b -> b.StartOffset)
         |> Seq.iter sortedOffsets.Add
 
     let cfgDistanceFrom = GraphUtils.distanceCache<offset>()
 
     let findDistanceFrom node =
         Dict.getValueOrUpdate cfgDistanceFrom node (fun () ->
-        let dist = GraphUtils.incrementalSourcedDijkstraAlgo node edges cfgDistanceFrom
+        let dist = Dictionary<_,_>() //GraphUtils.incrementalSourcedDijkstraAlgo node edges cfgDistanceFrom
         let distFromNode = Dictionary<offset, uint>()
         for i in dist do
             if i.Value <> GraphUtils.infinity then
@@ -188,13 +190,14 @@ type internal CfgTemporaryData (method : MethodWithBody) =
             |]
 
         dfs startVertices
+        (*
         sortedOffsets |> Seq.iter (fun bb ->
             if edges.ContainsKey bb then
                 let outgoing = edges.[bb]
                 if outgoing.Count > 1 then
                     offsetsWithSiblings.UnionWith outgoing
             else edges.Add(bb, HashSet<_>()))
-        
+        *)
         //TODO fix it
         //if sinks.Count > 0
         //then attachToAnySink |> ResizeArray.iter (fun offset -> calls.Add (CallInfo(offset, sinks.[0])))
@@ -202,7 +205,7 @@ type internal CfgTemporaryData (method : MethodWithBody) =
     //member this.MethodBase = methodBase
     member this.ILBytes = ilBytes
     member this.SortedOffsets = sortedOffsets
-    member this.Edges = edges
+    //member this.Edges = edges
     member this.Calls = calls
     member this.Sinks = sinks.ToArray()
     member this.LoopEntries = loopEntries
@@ -223,13 +226,13 @@ type CallInfo =
 
 and CfgInfo internal (cfg : CfgTemporaryData) =
     let resolveBasicBlockIndex offset =
-        let rec binSearch (sortedOffsets : ResizeArray<offset>) offset l r =
+        let rec binSearch (sortedOffsets : ResizeArray<BasicBlock>) offset l r =
             if l >= r then l
             else
                 let mid = (l + r) / 2
-                let midValue = sortedOffsets.[mid]
+                let midValue = sortedOffsets.[mid].StartOffset
                 let leftIsLefter = midValue <= offset
-                let rightIsRighter = mid + 1 >= sortedOffsets.Count || sortedOffsets.[mid + 1] > offset
+                let rightIsRighter = mid + 1 >= sortedOffsets.Count || sortedOffsets.[mid + 1].StartOffset > offset
                 if leftIsLefter && rightIsRighter then mid
                 elif not rightIsRighter
                     then binSearch sortedOffsets offset (mid + 1) r
@@ -250,18 +253,18 @@ and CfgInfo internal (cfg : CfgTemporaryData) =
         res
 
     member this.IlBytes = cfg.ILBytes
-    member this.SortedOffsets = cfg.SortedOffsets
-    member this.Edges = cfg.Edges
+    member this.SortedBasicBlocks = cfg.SortedOffsets
+    //member this.Edges = cfg.Edges
     member this.Sinks = sinks
     member this.Calls = calls
     member this.IsLoopEntry offset = loopEntries.Contains offset
     member internal this.ResolveBasicBlockIndex offset = resolveBasicBlockIndex offset
     member this.ResolveBasicBlock offset = resolveBasicBlock offset
-    member this.IsBasicBlockStart offset = resolveBasicBlock offset = offset
+    member this.IsBasicBlockStart offset = (resolveBasicBlock offset).StartOffset = offset
     // Returns dictionary of shortest distances, in terms of basic blocks (1 step = 1 basic block transition)
     member this.DistancesFrom offset =
         let bb = resolveBasicBlock offset
-        cfg.DistancesFrom bb
+        cfg.DistancesFrom bb.StartOffset
     member this.HasSiblings offset =
         this.IsBasicBlockStart offset && cfg.BlocksWithSiblings.Contains offset
 
@@ -287,7 +290,7 @@ and Method internal (m : MethodBase) as this =
     static member internal ReportCFGLoaded with get() = Method.cfgReporter and set v = Method.cfgReporter <- v
 
     // Returns a sequence of strings, one per instruction in basic block
-    member x.BasicBlockToString (offset : offset) : string seq =
+    (*member x.BasicBlockToString (offset : offset) : string seq =
         let cfg = x.CFG
         let idx = cfg.ResolveBasicBlockIndex offset
         let offset = cfg.SortedOffsets.[idx]
@@ -303,6 +306,7 @@ and Method internal (m : MethodBase) as this =
                 yield ILRewriter.PrintILInstr None None x.MethodBase instr
                 instr <- instr.next
         }
+*)
 
 [<CustomEquality; CustomComparison>]
 type public codeLocation = {offset : offset; method : Method}
@@ -348,12 +352,13 @@ type ApplicationGraph() as this =
     //let cfgs = Dictionary<MethodBase, CfgInfo>()
     let innerGraphVerticesToCodeLocationMap = ResizeArray<_>()
     let existingCalls = HashSet<codeLocation*codeLocation>()
-    let mutable queryEngine = GraphQueryEngine()
+    //let mutable queryEngine = GraphQueryEngine()
     let codeLocationToVertex = Dictionary<codeLocation, int<inputGraphVertex>>()        
-    let getVertexByCodeLocation (pos:codeLocation) =
-            codeLocationToVertex.[{pos with offset = pos.method.CFG.ResolveBasicBlock pos.offset}]
+    let getVertexByCodeLocation (pos:codeLocation) = Unchecked.defaultof<_>
+            //codeLocationToVertex.[{pos with offset = pos.method.CFG.ResolveBasicBlock pos.offset}]
         
-    let toDot filePath =
+    let toDot filePath = ()
+    (*
         let clusters = 
             seq{
                 for method in methodToFirstVertexIdMapping.Keys do
@@ -363,12 +368,13 @@ type ApplicationGraph() as this =
                         |> Seq.map (fun vertex -> getVertexByCodeLocation {method = method; offset = vertex})
                     yield Cluster(clusterName, vertices)
                 }
-    
-        queryEngine.ToDot(clusters, filePath)
+        *)
+        //queryEngine.ToDot(clusters, filePath)
                 
     let registerMethod (method:Method) =
         if not method.HasBody
         then Logger.trace "Attempt to register method without body."
+        (*
         if not <| methodToFirstVertexIdMapping.ContainsKey method
         then
             method.CFG.SortedOffsets
@@ -385,13 +391,14 @@ type ApplicationGraph() as this =
                     queryEngine.AddCfgEdge <| Edge (srcVertex, targetVertex)        
                 
             methodToFirstVertexIdMapping.Add(method, firstFreeVertexId)        
-               
+          *)     
     let addCallEdge (callSource:codeLocation) (callTarget:codeLocation) =   
         let callerMethodCfgInfo = callSource.method.CFG //cfgs.[callSource.method]
         let calledMethodCfgInfo = callTarget.method.CFG // cfgs.[callTarget.method]
         let callFrom = getVertexByCodeLocation callSource
         let callTo = getVertexByCodeLocation callTarget                    
-
+        ()
+        (*
         if not <| existingCalls.Contains (callSource, callTarget)
         then
             let added = existingCalls.Add(callSource,callTarget)
@@ -414,8 +421,11 @@ type ApplicationGraph() as this =
                 |> Array.map (fun returnFrom -> Edge(returnFrom, returnTo))
             queryEngine.AddCallReturnEdges (callEdge, returnEdges)
             //toDot "cfg_debug.dot"
+    *)
         
-    let moveState (initialPosition: codeLocation) (stateWithNewPosition: IGraphTrackableState) =        
+    let moveState (initialPosition: codeLocation) (stateWithNewPosition: IGraphTrackableState) =
+        ()
+        (*
         let initialVertexInInnerGraph = getVertexByCodeLocation initialPosition            
         let finalVertexInnerGraph = getVertexByCodeLocation stateWithNewPosition.CodeLocation 
         if initialVertexInInnerGraph <> finalVertexInnerGraph
@@ -442,9 +452,12 @@ type ApplicationGraph() as this =
             assert removed
             queryEngine.AddStartVertex startVertex
             if startVertexToStates.[previousStartVertex].Count = 0
-            then queryEngine.RemoveStartVertex previousStartVertex 
+            then queryEngine.RemoveStartVertex previousStartVertex
+            *)
             
     let addStates (parentState:Option<IGraphTrackableState>) (states:array<IGraphTrackableState>) =
+        ()
+        (*
         let history =
             match parentState with
             | None -> None
@@ -464,6 +477,7 @@ type ApplicationGraph() as this =
                 startVertex)
             
         queryEngine.AddStartVertices startVertices
+        *)
     
     let getShortestDistancesToGoals (states:array<codeLocation>) = 
         states
@@ -480,7 +494,7 @@ type ApplicationGraph() as this =
                     match message with
                     | ResetQueryEngine ->
                         Logger.trace "Application graph reset."
-                        queryEngine <- GraphQueryEngine ()
+                        //queryEngine <- GraphQueryEngine ()
                         innerGraphVerticesToCodeLocationMap.Clear()
                         firstFreeVertexId <- 0<inputGraphVertex>
                         methodToFirstVertexIdMapping.Clear()
@@ -499,13 +513,15 @@ type ApplicationGraph() as this =
                         //toDot "cfg.dot"
                     | AddGoals positions ->
                         //Logger.trace "3"
-                        positions
-                        |> Array.map getVertexByCodeLocation 
-                        |> queryEngine.AddFinalVertices 
+                        //positions
+                        //|> Array.map getVertexByCodeLocation 
+                        //|> queryEngine.AddFinalVertices
+                        () 
                     | RemoveGoal pos ->
                         //Logger.trace "4"
-                        getVertexByCodeLocation pos
-                        |> queryEngine.RemoveFinalVertex
+                        //getVertexByCodeLocation pos
+                        //|> queryEngine.RemoveFinalVertex
+                        ()
                     | SpawnStates states ->
                         //Logger.trace "5"
                         Array.ofSeq states |> addStates None
@@ -521,12 +537,13 @@ type ApplicationGraph() as this =
                         replyChannel.Reply (getShortestDistancesToGoals states)
                     | GetDistanceToNearestGoal (replyChannel, states) ->
                         //Logger.trace "8"
-                        let result =
+                        let result = Unchecked.defaultof<_>
+                            (*
                             states
                             |> Seq.choose (fun state ->
                                 match queryEngine.GetDistanceToNearestGoal stateToStartVertex.[state] with
                                 | Some (_,distance) -> Some (state, int distance)
-                                | None -> None)
+                                | None -> None)*)
                         replyChannel.Reply result
                     | GetReachableGoals (replyChannel, states) -> replyChannel.Reply (Dictionary<_,_>())
                 with
@@ -627,8 +644,8 @@ module Application =
     let moveState fromLoc toState forked =
         graph.MoveState fromLoc toState
         graph.AddForkedStates toState forked
-        let d = graph.GetDistanceToNearestGoal (seq {yield toState; yield! forked})
-        Logger.trace $"Distances: %A{d |> Seq.map snd}"
+        //let d = graph.GetDistanceToNearestGoal (seq {yield toState; yield! forked})
+        //Logger.trace $"Distances: %A{d |> Seq.map snd}"
         visualizer.VisualizeStep fromLoc toState forked
 
     let terminateState state =

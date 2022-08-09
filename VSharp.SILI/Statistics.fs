@@ -33,7 +33,7 @@ type public SILIStatistics() =
     let isHeadOfBasicBlock (codeLocation : codeLocation) =
         let method = codeLocation.method
         if method.HasBody then
-            method.CFG.SortedOffsets.BinarySearch(codeLocation.offset) >= 0
+            method.CFG.IsBasicBlockStart codeLocation.offset
         else false
 
     let printDict' placeHolder (d : Dictionary<codeLocation, uint>) sb (m : Method, locs) =

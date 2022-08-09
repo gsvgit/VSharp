@@ -11,15 +11,15 @@ type DotVisualizer(outputDirectory : DirectoryInfo) =
     let dotPath = if String.IsNullOrWhiteSpace dotPath then "dot" else dotPath
     let dotFile = Path.GetTempFileName()
     let outputDirectory = outputDirectory.CreateSubdirectory("visualization")
-    let ids = Dictionary<codeLocation, string>()
+    let ids = Dictionary<BasicBlock, string>()
     let mutable lastVertexId = 0
     let mutable lastPictureId = 0
-    let stateMarkers = Dictionary<codeLocation, int>()
-    let visitedVertices = HashSet<codeLocation>()
-    let visitedEdges = HashSet<codeLocation * codeLocation>()
+    let stateMarkers = Dictionary<BasicBlock, int>()
+    let visitedVertices = HashSet<BasicBlock>()
+    let visitedEdges = HashSet<BasicBlock * BasicBlock>()
     let states = ResizeArray<IGraphTrackableState>()
 
-    let loc2BB loc = {method = loc.method; offset = loc.method.CFG.ResolveBasicBlock loc.offset}
+    let loc2BB loc = loc.method.CFG.ResolveBasicBlock loc.offset
 
     let leave loc =
         stateMarkers.[loc] <- stateMarkers.[loc] - 1
@@ -45,10 +45,10 @@ type DotVisualizer(outputDirectory : DirectoryInfo) =
     let colorOfEdge fromLoc toLoc =
         if visitedEdges.Contains(fromLoc, toLoc) then visitedColor else unvisitedColor
 
-    let node loc =
-        let color, style = colorOfNode loc
-        let text = (loc.method.BasicBlockToString loc.offset |> join "\\l") + "\\l"
-        $"{id loc} [shape=box, label=\"{text}\", color=\"{color}\", style={style}]"
+    let node basicBlock =
+        let color, style = colorOfNode basicBlock
+        let text = (basicBlock.ToString() |> join "\\l") + "\\l"
+        $"{id basicBlock} [shape=box, label=\"{text}\", color=\"{color}\", style={style}]"
     let edge fromLoc toLoc =
         $"{id fromLoc} -> {id toLoc} [color=\"{colorOfEdge fromLoc toLoc}\"]"
 
@@ -59,13 +59,11 @@ type DotVisualizer(outputDirectory : DirectoryInfo) =
             let id = m.Id
             yield $"subgraph cluster_{id} {{"
             yield $"label=%A{name}"
-            for vertex in cfg.SortedOffsets do
-                yield node {method = m; offset = vertex}
-            for kvp in cfg.Edges do
-                let from = {method = m; offset = kvp.Key}
-                for toOffset in kvp.Value do
-                    let toLoc = {method = m; offset = toOffset}
-                    yield edge from toLoc
+            for basicBlock in cfg.SortedBasicBlocks do
+                yield node basicBlock
+                for kvp in basicBlock.OutgoingEdges do
+                    for _to in kvp.Value do            
+                        yield edge basicBlock (_to :?> BasicBlock)
             yield "}"
         }
 
@@ -115,7 +113,7 @@ type DotVisualizer(outputDirectory : DirectoryInfo) =
                 leave fromLoc
                 move fromLoc toLoc
             newStates |> Seq.iter (fun state ->
-                move fromLoc state.CodeLocation
+                move fromLoc (state :?> BasicBlock)
                 states.Add state)
             if transited || not <| Seq.isEmpty newStates then
                 (x :> IVisualizer).VisualizeGraph()

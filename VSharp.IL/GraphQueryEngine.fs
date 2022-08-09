@@ -1,6 +1,7 @@
 namespace VSharp
 
 open System.Collections.Generic
+open CFPQ_GLL.Common
 open CFPQ_GLL.GLL
 open CFPQ_GLL.GSS
 open CFPQ_GLL.InputGraph
@@ -82,6 +83,7 @@ type Edge =
 type TypedEdge =
     | Virtual of Edge
     | Real of Edge
+(*
 type private CfpqState (query) =
     let mutable gss = GSS()    
     let mutable matchedRanges = MatchedRanges ()
@@ -393,3 +395,4 @@ type GraphQueryEngine() as this =
             }
         
         System.IO.File.WriteAllLines(filePath, content)
+                *)
