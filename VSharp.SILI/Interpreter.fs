@@ -1857,7 +1857,7 @@ type internal ILInterpreter(isConcolicMode : bool) as this =
 
     member x.ExecuteAllInstructionsForCFGEdges (m : Method) (cilState : cilState) : cilState list * cilState list * cilState list =
         let ip = currentIp cilState
-        assert(ip.CanBeExpanded())
+        assert ip.CanBeExpanded()
         let startingOffset = ip.Offset()
         let cfg = m.CFG
         let endOffset =
@@ -1869,7 +1869,7 @@ type internal ILInterpreter(isConcolicMode : bool) as this =
                     if cfg.SortedBasicBlocks.[mid].StartOffset <= startingOffset then binarySearch mid r
                     else binarySearch l mid
             let index = binarySearch 0 (Seq.length cfg.SortedBasicBlocks)
-            if cfg.SortedBasicBlocks.[index] = lastOffset then Offset.from cfg.IlBytes.Length
+            if cfg.SortedBasicBlocks.[index] = lastOffset then Offset.from m.ILBytes.Length
             else cfg.SortedBasicBlocks.[index + 1].StartOffset
 
         let isIpOfCurrentBasicBlock (ip : ip) =
