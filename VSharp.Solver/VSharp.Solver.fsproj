@@ -35,7 +35,7 @@
     </ItemGroup>
 
     <ItemGroup Condition=" !$(IsM1) ">
-        <PackageReference Include="Microsoft.Z3.x64" Version="4.8.6" />
+              <PackageReference Include="Microsoft.Z3" Version="4.11.2" />
     </ItemGroup>
 
     <ItemGroup Condition=" $(IsM1) ">
