@@ -179,6 +179,7 @@ namespace VSharp.CoverageRunner
             var visited = GetHistory(workingDirectory);
             if (visited is null)
             {
+                Console.WriteLine("Error in deserialization!");
                 Logger.printLogString(Logger.Error, "CoverageRunner could not deserialize coverage history");
                 return -1;
             }

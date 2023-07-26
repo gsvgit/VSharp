@@ -46,7 +46,7 @@ namespace VSharp.CSharpUtils
             return null;
         }
 
-        public VSharpAssemblyLoadContext(string name) : base(name)
+        public VSharpAssemblyLoadContext(string name) : base(name,isCollectible:true)
         {
             // Doesn't work with this.Resolving. It is not yet known why.
             AppDomain.CurrentDomain.AssemblyResolve += OnAssemblyResolve;
@@ -140,6 +140,7 @@ namespace VSharp.CSharpUtils
         public void Dispose()
         {
             AppDomain.CurrentDomain.AssemblyResolve -= OnAssemblyResolve;
+            Unload();
         }
     }
 }

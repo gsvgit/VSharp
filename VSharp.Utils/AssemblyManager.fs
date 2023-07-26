@@ -24,19 +24,43 @@ module AssemblyManager =
         alc.remove_ExtraResolver resolver
 
     let LoadFromAssemblyPath (assemblyPath : string) =
-        alc.LoadFromAssemblyPath assemblyPath
-
+        try 
+            alc.LoadFromAssemblyPath assemblyPath
+        with
+        | e ->
+            alc.Unload()
+            reraise()
     let LoadCopy (assembly : Assembly) =
-        alc.LoadFromAssemblyPath(assembly.Location)
+        try
+            alc.LoadFromAssemblyPath(assembly.Location)
+        with
+        | e ->
+            alc.Unload()
+            reraise()
 
     let LoadFromAssemblyName (assemblyName : string) =
-        alc.LoadFromAssemblyName(AssemblyName(assemblyName))
+        try
+            alc.LoadFromAssemblyName(AssemblyName(assemblyName))
+        with
+        | e ->
+            alc.Unload()
+            reraise()
 
     let NormalizeType (t : Type) =
-        alc.NormalizeType(t)
+        try
+            alc.NormalizeType(t)
+        with
+        | e ->
+            alc.Unload()
+            reraise()
 
     let NormalizeMethod (m : MethodBase) =
-        alc.NormalizeMethod(m)
+        try
+            alc.NormalizeMethod(m)
+        with
+        | e ->
+            alc.Unload()
+            reraise()
 
     // Used in tests to reset the state. For example, in tests Veritas.
     // A more correct approach is to inject a VSharpAssemblyLoadContext instance

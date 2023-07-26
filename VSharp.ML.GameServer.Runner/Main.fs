@@ -101,7 +101,7 @@ let ws checkActualCoverage outputDirectory (webSocket : WebSocket) (context: Htt
                         match settings.CoverageZone with
                         | CoverageZone.Method ->
                             let method = RunnerProgram.ResolveMethod(assembly, settings.NameOfObjectToCover)
-                            let statistics = TestGenerator.Cover(method, timeout = 15 * 60, outputDirectory = outputDirectory,  oracle = oracle, searchStrategy = SearchStrategy.AI, coverageToSwitchToAI = uint settings.CoverageToStart, stepsToPlay = gameStartParams.StepsToPlay, solverTimeout=2)
+                            let statistics = TestGenerator.Cover(method, verbosity = Verbosity.Info, timeout = 15 * 60, outputDirectory = outputDirectory,  oracle = oracle, searchStrategy = SearchStrategy.AI, coverageToSwitchToAI = uint settings.CoverageToStart, stepsToPlay = gameStartParams.StepsToPlay, solverTimeout=2)
                             let actualCOverage = 
                                 if checkActualCoverage
                                 then
@@ -128,6 +128,8 @@ let ws checkActualCoverage outputDirectory (webSocket : WebSocket) (context: Htt
                     Application.reset()
                     API.Reset()
                     HashMap.hashMap.Free()
+                    AssemblyManager.Reset()
+                    
                     do! sendResponse (GameOver (actualCoverage, testsCount, errorsCount))
                 | x -> failwithf $"Unexpected message: %A{x}"
                 
@@ -145,6 +147,7 @@ let app checkActualCoverage port : WebPart =
     
 [<EntryPoint>]
 let main args =
+    (*
     let parser = ArgumentParser.Create<CliArguments>(programName = "VSharp.ML.GameServer.Runner.exe")
     let args = parser.Parse args
     let checkActualCoverage =
@@ -167,4 +170,22 @@ let main args =
     startWebServer {defaultConfig with
                         logger = Targets.create Verbose [||]
                         bindings = [HttpBinding.createSimple HTTP "127.0.0.1" port]} (app checkActualCoverage outputDirectory)
+    0
+    *)
+    
+    let assembly = RunnerProgram.TryLoadAssembly <| FileInfo "VSharp.ML.GameMaps.dll"
+    let method = RunnerProgram.ResolveMethod(assembly, "BinarySearch")
+    let statistics = TestGenerator.Cover(method, verbosity = Verbosity.Info, timeout = 20, searchStrategy = SearchStrategy.BFS, solverTimeout=2)
+    
+    let method = RunnerProgram.ResolveMethod(assembly, "Switches1")
+    let statistics = TestGenerator.Cover(method, verbosity = Verbosity.Info, timeout = 20, searchStrategy = SearchStrategy.BFS, solverTimeout=2)
+    
+    let method = RunnerProgram.ResolveMethod(assembly, "Switches2")
+    let statistics = TestGenerator.Cover(method, verbosity = Verbosity.Info, timeout = 20, searchStrategy = SearchStrategy.BFS, solverTimeout=2)
+    
+    let method = RunnerProgram.ResolveMethod(assembly, "NestedFors")
+    let statistics = TestGenerator.Cover(method, verbosity = Verbosity.Info, timeout = 20, searchStrategy = SearchStrategy.BFS, solverTimeout=2)
+    
+    let method = RunnerProgram.ResolveMethod(assembly, "SearchKMP")
+    let statistics = TestGenerator.Cover(method, verbosity = Verbosity.Info, timeout = 20, searchStrategy = SearchStrategy.BFS, solverTimeout=2)
     0

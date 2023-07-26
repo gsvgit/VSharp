@@ -1051,13 +1051,14 @@ module internal Z3 =
             StateModel state
 
 
-    let private ctx = new Context()
-    let private builder = Z3Builder(ctx)
+    let mutable private ctx = new Context()
+    let mutable private builder = Z3Builder(ctx)
 
     type internal Z3Solver(timeoutMs : uint option) =
         let solver = ctx.MkSolver()
-
+       
         do
+            Global.SetParameter("memory_max_size", "200")
             match timeoutMs with
             | Some timeoutMs ->
                 let parameters = ctx.MkParams().Add("timeout", timeoutMs);
@@ -1065,6 +1066,9 @@ module internal Z3 =
             | None -> ()
 
         interface ISolver with
+            member x.Dispose () =
+                //ctx.Dispose()
+                solver.Dispose()
             member x.CheckSat (encCtx : encodingContext) (q : term) : smtResult =
                 Logger.printLog Logger.Trace "SOLVER: trying to solve constraints..."
                 Logger.printLogLazy Logger.Trace "%s" (lazy q.ToString())
@@ -1113,3 +1117,7 @@ module internal Z3 =
 
     let reset() =
         builder.Reset()
+        ctx.Dispose()
+        ctx <- new Context()
+        builder <- Z3Builder(ctx)
+        

@@ -7,6 +7,7 @@ using System.Linq;
 using System.Net.WebSockets;
 using System.Reflection;
 using System.Text;
+using VSharp.Core;
 using VSharp.CSharpUtils;
 using VSharp.IL;
 using VSharp.Interpreter.IL;
@@ -257,6 +258,7 @@ namespace VSharp
             explorer.Interpret(isolated, entryPoints, unitTests.GenerateTest, unitTests.GenerateError, _ => { },
                 HandleInternalFail, HandleCrash);
 
+            SolverInteraction.solver.Value.Dispose();
             var statistics = new Statistics(explorer.Statistics.CurrentExplorationTime, unitTests.TestDirectory,
                 unitTests.UnitTestsCount, unitTests.ErrorsCount,
                 explorer.Statistics.IncompleteStates.Select(e => e.iie.Value.Message).Distinct());

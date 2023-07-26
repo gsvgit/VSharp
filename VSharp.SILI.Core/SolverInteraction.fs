@@ -22,10 +22,11 @@ module public SolverInteraction =
     type ISolver =
         abstract CheckSat : encodingContext -> term -> smtResult
         abstract Assert : encodingContext -> term -> unit
+        abstract Dispose: unit -> unit
 
         abstract SetMaxBufferSize : int -> unit
 
-    let mutable private solver : ISolver option = None
+    let mutable solver : ISolver option = None
     let mutable private onSolverStarted : unit -> unit = id
     let mutable private onSolverStopped : unit -> unit = id
 

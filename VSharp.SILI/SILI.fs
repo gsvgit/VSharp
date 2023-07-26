@@ -378,6 +378,7 @@ type public SILI(options : SiliOptions) =
                         saveExpectedResult fileForExpectedResults s.id statistics1.Value statistics2
                 with
                 | e ->
+                    printfn $"Error: {e}"
                     match searcher with
                     | :? BidirectionalSearcher as searcher ->                        
                         match searcher.ForwardSearcher with
@@ -385,7 +386,7 @@ type public SILI(options : SiliOptions) =
                             if searcher.InAIMode
                             then searcher.ProvideOracleFeedback (Feedback.MoveReward (Reward(0u<coverageReward>,0u<_>,0u<_>)))
                         | _ -> ()
-                    | _ -> ()
+                    | _ -> ()                    
                     reportStateInternalFail s e
             | GoBack(s, p) ->
                 try
@@ -417,6 +418,7 @@ type public SILI(options : SiliOptions) =
     member x.Reset entryMethods =
         API.Reset()
         SolverPool.reset()
+        API.ConfigureSolver(SolverPool.mkSolver(solverTimeout))
         stepsCount <- 0
         currentStateId <- 0u<stateId>
         statistics.Reset()
@@ -476,9 +478,11 @@ type public SILI(options : SiliOptions) =
                     if not initialStates.IsEmpty then
                         x.AnswerPobs initialStates
                 let explorationTask = Task.Run(initializeAndStart)
-                let finished =
-                    if hasTimeout then explorationTask.Wait(int (timeout * 1.5))
-                    else explorationTask.Wait(); true
+                let finished =                    
+                    //if hasTimeout then explorationTask.Wait(int (timeout * 1.5))
+                    //else
+                    explorationTask.Wait()
+                    true
                 if not finished then Logger.warning "Execution was cancelled due to timeout"
             with
             | :? AggregateException as e ->
