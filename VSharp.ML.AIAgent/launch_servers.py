@@ -42,6 +42,7 @@ async def dequeue_instance(request):
         server_info = SERVER_INSTANCES.get(block=False)
         assert server_info.pid is Undefined
         server_info = await run_server_instance(
+            port=server_info.port if DEBUG else None,
             start_server=FeatureConfig.ON_GAME_SERVER_RESTART.enabled,
         )
         logging.info(f"issued {server_info}: {psutil.Process(server_info.pid)}")
@@ -184,7 +185,7 @@ def server_manager(server_queue: Queue[ServerInstanceInfo], *, debug: bool):
     ports = (
         [
             ServerConfig.VSHARP_INSTANCES_START_PORT + i
-            for i in GeneralConfig.SERVER_COUNT
+            for i in range(GeneralConfig.SERVER_COUNT)
         ]
         if debug
         else None
@@ -202,7 +203,7 @@ def server_manager(server_queue: Queue[ServerInstanceInfo], *, debug: bool):
 
 
 def main():
-    global SERVER_INSTANCES, PROCS, RESULTS
+    global SERVER_INSTANCES, PROCS, RESULTS, DEBUG
     parser = argparse.ArgumentParser(description="V# instances launcher")
     parser.add_argument(
         "--debug",
@@ -211,13 +212,17 @@ def main():
     )
 
     args = parser.parse_args()
+    DEBUG = args.debug or False
+    # restart should be disabled for debug mode
+    if DEBUG and FeatureConfig.ON_GAME_SERVER_RESTART.enabled:
+        raise RuntimeError("Disable ON_GAME_SERVER_RESTART feature to use debug mode")
 
     # Queue[ServerInstanceInfo]
     SERVER_INSTANCES = Queue()
     PROCS = []
     RESULTS = []
 
-    with server_manager(SERVER_INSTANCES, debug=args.debug):
+    with server_manager(SERVER_INSTANCES, debug=DEBUG):
         app = web.Application()
         app.add_routes(routes)
         web.run_app(app, port=BrokerConfig.BROKER_PORT)
