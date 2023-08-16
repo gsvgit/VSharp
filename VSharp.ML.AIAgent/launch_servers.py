@@ -1,11 +1,13 @@
 import argparse
+import asyncio
 import json
 import logging
 import os
 import signal
+import socket
 import subprocess
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from queue import Empty, Queue
 
 import psutil
@@ -24,13 +26,22 @@ logging.basicConfig(
 )
 
 
-@routes.get("/get_ws")
+avoid_same_free_port_lock = asyncio.Lock()
+
+
+def find_free_port() -> int:
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+        s.bind(("", 0))
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return s.getsockname()[1]
+
+
+@routes.get(f"/{BrokerConfig.GET_WS_HANDLE}")
 async def dequeue_instance(request):
     try:
         server_info = SERVER_INSTANCES.get(block=False)
         assert server_info.pid is Undefined
-        server_info = run_server_instance(
-            port=server_info.port,
+        server_info = await run_server_instance(
             start_server=FeatureConfig.ON_GAME_SERVER_RESTART.enabled,
         )
         logging.info(f"issued {server_info}: {psutil.Process(server_info.pid)}")
@@ -40,7 +51,7 @@ async def dequeue_instance(request):
         raise
 
 
-@routes.post("/post_ws")
+@routes.post(f"/{BrokerConfig.POST_WS_HANDLE}")
 async def enqueue_instance(request):
     returned_instance_info_raw = await request.read()
     returned_instance_info = ServerInstanceInfo.from_json(
@@ -59,7 +70,7 @@ async def enqueue_instance(request):
     return web.HTTPOk()
 
 
-@routes.post("/send_res")
+@routes.post(f"/{BrokerConfig.SEND_RES_HANDLE}")
 async def append_results(request):
     global RESULTS
     data = await request.read()
@@ -68,7 +79,7 @@ async def append_results(request):
     return web.HTTPOk()
 
 
-@routes.get("/recv_res")
+@routes.get(f"/{BrokerConfig.RECEIVE_RES_HANDLE}")
 async def send_and_clear_results(request):
     global RESULTS
     if not RESULTS:
@@ -79,32 +90,36 @@ async def send_and_clear_results(request):
 
 
 def get_socket_url(port: int) -> WSUrl:
-    return f"ws://0.0.0.0:{port}/gameServer"
+    return f"ws://{BrokerConfig.BROKER_HOST}:{port}/gameServer"
 
 
-def run_server_instance(port: int, start_server: bool) -> ServerInstanceInfo:
-    launch_server = [
-        "dotnet",
-        "VSharp.ML.GameServer.Runner.dll",
-        "--checkactualcoverage",
-        "--port",
-    ]
-    ws_url = get_socket_url(port)
-    if not start_server:
-        return ServerInstanceInfo(port, ws_url, pid=Undefined)
+async def run_server_instance(
+    *, port: int = None, start_server: bool
+) -> ServerInstanceInfo:
+    async with avoid_same_free_port_lock:
+        port = port or find_free_port()
+        launch_server = [
+            "dotnet",
+            "VSharp.ML.GameServer.Runner.dll",
+            "--checkactualcoverage",
+            "--port",
+        ]
+        ws_url = get_socket_url(port)
+        if not start_server:
+            return ServerInstanceInfo(port, ws_url, pid=Undefined)
 
-    proc = subprocess.Popen(
-        launch_server + [str(port)],
-        stdout=subprocess.PIPE,
-        start_new_session=True,
-        cwd=SERVER_WORKING_DIR,
-    )
+        proc = subprocess.Popen(
+            launch_server + [str(port)],
+            stdout=subprocess.PIPE,
+            start_new_session=True,
+            cwd=SERVER_WORKING_DIR,
+        )
 
-    while True:
-        out = proc.stdout.readline()
-        if out and "Smooth!" in out.decode("utf-8"):
-            print(out.decode("utf-8"), end="")
-            break
+        while True:
+            out = proc.stdout.readline()
+            if out and "Smooth!" in out.decode("utf-8"):
+                print(out.decode("utf-8"), end="")
+                break
 
     server_pid = proc.pid
     PROCS.append(server_pid)
@@ -118,13 +133,23 @@ def run_server_instance(port: int, start_server: bool) -> ServerInstanceInfo:
     return ServerInstanceInfo(port, ws_url, server_pid)
 
 
-def run_servers(num_inst: int, start_port: int) -> list[ServerInstanceInfo]:
-    servers_info = []
-    for i in range(num_inst):
-        server_info = run_server_instance(start_port + i, False)
-        servers_info.append(server_info)
+async def run_servers(ports: list[int] | None) -> list[ServerInstanceInfo]:
+    if not ports:
+        ports = [None for _ in range(GeneralConfig.SERVER_COUNT)]
+    servers_start_tasks = []
 
-    return servers_info
+    async with asyncio.TaskGroup() as tg:
+        for port in ports:
+
+            async def run(on_port):
+                server_info = await run_server_instance(
+                    port=on_port, start_server=False
+                )
+                servers_start_tasks.append(server_info)
+
+            tg.create_task(run(port))
+
+    return servers_start_tasks
 
 
 def kill_server(server_instance: ServerInstanceInfo):
@@ -153,12 +178,18 @@ def kill_process(pid: int):
 
 
 @contextmanager
-def server_manager(server_queue: Queue[ServerInstanceInfo]):
+def server_manager(server_queue: Queue[ServerInstanceInfo], *, debug: bool):
     global PROCS
-    servers_info = run_servers(
-        num_inst=GeneralConfig.SERVER_COUNT,
-        start_port=ServerConfig.VSHARP_INSTANCES_START_PORT,
+
+    ports = (
+        [
+            ServerConfig.VSHARP_INSTANCES_START_PORT + i
+            for i in GeneralConfig.SERVER_COUNT
+        ]
+        if debug
+        else None
     )
+    servers_info = asyncio.run(run_servers(ports))
 
     for server_info in servers_info:
         server_queue.put(server_info)
@@ -179,12 +210,14 @@ def main():
         help="dont launch servers if set",
     )
 
+    args = parser.parse_args()
+
     # Queue[ServerInstanceInfo]
     SERVER_INSTANCES = Queue()
     PROCS = []
     RESULTS = []
 
-    with server_manager(SERVER_INSTANCES):
+    with server_manager(SERVER_INSTANCES, debug=args.debug):
         app = web.Application()
         app.add_routes(routes)
         web.run_app(app, port=BrokerConfig.BROKER_PORT)

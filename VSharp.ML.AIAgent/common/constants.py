@@ -32,13 +32,13 @@ TQDM_FORMAT_DICT = {
 
 
 class WebsocketSourceLinks:
-    GET_WS = f"http://0.0.0.0:{BrokerConfig.BROKER_PORT}/get_ws"
-    POST_WS = f"http://0.0.0.0:{BrokerConfig.BROKER_PORT}/post_ws"
+    GET_WS = f"http://{BrokerConfig.BROKER_HOST}:{BrokerConfig.BROKER_PORT}/{BrokerConfig.GET_WS_HANDLE}"
+    POST_WS = f"http://{BrokerConfig.BROKER_HOST}:{BrokerConfig.BROKER_PORT}/{BrokerConfig.POST_WS_HANDLE}"
 
 
 class ResultsHandlerLinks:
-    POST_RES = f"http://0.0.0.0:{BrokerConfig.BROKER_PORT}/send_res"
-    GET_RES = f"http://0.0.0.0:{BrokerConfig.BROKER_PORT}/recv_res"
+    POST_RES = f"http://{BrokerConfig.BROKER_HOST}:{BrokerConfig.BROKER_PORT}/{BrokerConfig.SEND_RES_HANDLE}"
+    GET_RES = f"http://{BrokerConfig.BROKER_HOST}:{BrokerConfig.BROKER_PORT}/{BrokerConfig.RECEIVE_RES_HANDLE}"
 
 
 DUMMY_INPUT_PATH = Path("ml/onnx/dummy_input.json")

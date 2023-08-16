@@ -30,6 +30,11 @@ class GeneralConfig:
 
 class BrokerConfig:
     BROKER_PORT = 8080
+    BROKER_HOST = "0.0.0.0"
+    GET_WS_HANDLE = "get_ws"
+    POST_WS_HANDLE = "post_ws"
+    SEND_RES_HANDLE = "send_res"
+    RECEIVE_RES_HANDLE = "recv_res"
 
 
 class ServerConfig:
