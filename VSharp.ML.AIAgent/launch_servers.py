@@ -139,16 +139,11 @@ async def run_servers(ports: list[int] | None) -> list[ServerInstanceInfo]:
         ports = [None for _ in range(GeneralConfig.SERVER_COUNT)]
     servers_start_tasks = []
 
-    async with asyncio.TaskGroup() as tg:
-        for port in ports:
+    async def run(on_port):
+        server_info = await run_server_instance(port=on_port, start_server=False)
+        servers_start_tasks.append(server_info)
 
-            async def run(on_port):
-                server_info = await run_server_instance(
-                    port=on_port, start_server=False
-                )
-                servers_start_tasks.append(server_info)
-
-            tg.create_task(run(port))
+    asyncio.gather(*[run(port) for port in ports])
 
     return servers_start_tasks
 
