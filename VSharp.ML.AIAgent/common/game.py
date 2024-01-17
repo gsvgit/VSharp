@@ -8,6 +8,7 @@ from dataclasses_json import dataclass_json
 class StateHistoryElem:
     GraphVertexId: int
     NumOfVisits: int
+    StepWhenVisitedLastTime: int
 
 
 @dataclass_json
@@ -15,11 +16,12 @@ class StateHistoryElem:
 class State:
     Id: int
     Position: int
-    PredictedUsefulness: float
     PathConditionSize: int
     VisitedAgainVertices: int
     VisitedNotCoveredVerticesInZone: int
     VisitedNotCoveredVerticesOutOfZone: int
+    StepWhenMovedLastTime: int
+    InstructionsVisitedInCurrentBlock: int
     History: list[StateHistoryElem]
     Children: list[int]
 
@@ -30,13 +32,14 @@ class State:
 @dataclass_json
 @dataclass(slots=True)
 class GameMapVertex:
-    Uid: int
     Id: int
     InCoverageZone: bool
     BasicBlockSize: int
     CoveredByTest: bool
     VisitedByState: bool
     TouchedByState: bool
+    ContainsCall: bool
+    ContainsThrow: bool
     States: list[int]
 
 
@@ -69,7 +72,6 @@ class GameMap:
     MaxSteps: int
     CoverageToStart: int
     AssemblyFullName: str
-    CoverageZone: bool
     NameOfObjectToCover: str
     MapName: str
 
