@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using Microsoft.FSharp.Core;
 using VSharp.CoverageTool;
 using VSharp.CSharpUtils;
 using VSharp.Interpreter.IL;
@@ -188,8 +189,9 @@ namespace VSharp
                     checkAttributes: true,
                     stopOnCoverageAchieved: 100,
                     randomSeed: options.RandomSeed,
-                    stepsLimit: options.StepsLimit
-                );
+                    stepsLimit: options.StepsLimit,
+                    aiAgentTrainingOptions: options.AIAgentTrainingOptions == null ? FSharpOption<AIAgentTrainingOptions>.None :FSharpOption<AIAgentTrainingOptions>.Some(options.AIAgentTrainingOptions),
+                    pathToModel: options.PathToModel == null ? FSharpOption<string>.None : FSharpOption<string>.Some(options.PathToModel));
 
             var fuzzerOptions =
                 new FuzzerOptions(

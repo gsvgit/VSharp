@@ -1,6 +1,7 @@
 namespace VSharp.Explorer
 
 open System
+open System.IO
 open System.Reflection
 open System.Threading
 open System.Threading.Tasks
@@ -25,9 +26,11 @@ type private IExplorer =
     abstract member StartExploration: (Method * state) list -> (Method * string[] * state) list -> Task
 
 type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVMStatistics, reporter: IReporter) =
-
-    let options = explorationOptions.svmOptions
-
+    let options = explorationOptions.svmOptions 
+    let folderToStoreSerializationResult =
+        match options.aiAgentTrainingOptions with
+        | None -> ""
+        | Some options -> getFolderToStoreSerializationResult (Path.GetDirectoryName explorationOptions.outputDirectory.FullName) options.mapName    
     let hasTimeout = explorationOptions.timeout.TotalMilliseconds > 0
 
     let solverTimeout =
@@ -331,12 +334,16 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
             | a -> action <- a; true
         (* TODO: checking for timeout here is not fine-grained enough (that is, we can work significantly beyond the
                  timeout, but we'll live with it for now. *)
-        while not isStopped && not <| isStepsLimitReached() && not <| isTimeoutReached() && pick() do
+        while not isStopped && not <| isStepsLimitReached() && not <| isTimeoutReached() && pick() do            
             if shouldReleaseBranches() then
                 releaseBranches()
             match action with
             | GoFront s ->
                 try
+                    if options.aiAgentTrainingOptions.IsSome && options.aiAgentTrainingOptions.Value.serializeSteps
+                    then
+                        dumpGameState (System.IO.Path.Combine(folderToStoreSerializationResult, string firstFreeEpisodeNumber)) s.internalId
+                        firstFreeEpisodeNumber <- firstFreeEpisodeNumber + 1
                     x.Forward(s)
                 with
                 | e -> reportStateInternalFail s e

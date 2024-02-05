@@ -256,6 +256,10 @@ namespace VSharp.Runner
                 aliases: new[] { "--timeout", "-t" },
                 () => -1,
                 "Time for test generation in seconds. Negative value means no timeout.");
+            var pathToModelOption = new Option<string>(
+                aliases: new[] { "--model", "-m" },
+                () => defaultOptions.PathToModel,
+                "Path to ONNX file with model for AI searcher.");
             var solverTimeoutOption = new Option<int>(
                 aliases: new[] { "--solver-timeout", "-st" },
                 () => -1,
@@ -397,6 +401,7 @@ namespace VSharp.Runner
             specificMethodCommand.SetHandler(context =>
             {
                 var parseResult = context.ParseResult;
+                var pathToModel = parseResult.GetValueForOption(pathToModelOption);
                 var output = parseResult.GetValueForOption(outputOption);
                 Debug.Assert(output is not null);
                 SpecificMethodHandler(
@@ -411,7 +416,8 @@ namespace VSharp.Runner
                     parseResult.GetValueForOption(searchStrategyOption),
                     parseResult.GetValueForOption(verbosityOption),
                     parseResult.GetValueForOption(recursionThresholdOption),
-                    parseResult.GetValueForOption(explorationModeOption)
+                    parseResult.GetValueForOption(explorationModeOption),
+                    pathToModel
                 );
             });
 
@@ -426,6 +432,7 @@ namespace VSharp.Runner
             {
                 var parseResult = context.ParseResult;
                 var output = parseResult.GetValueForOption(outputOption);
+                var pathToModel = parseResult.GetValueForOption(pathToModelOption);
                 Debug.Assert(output is not null);
                 NamespaceHandler(
                     parseResult.GetValueForArgument(assemblyPathArgument),
@@ -438,7 +445,8 @@ namespace VSharp.Runner
                     parseResult.GetValueForOption(searchStrategyOption),
                     parseResult.GetValueForOption(verbosityOption),
                     parseResult.GetValueForOption(recursionThresholdOption),
-                    parseResult.GetValueForOption(explorationModeOption)
+                    parseResult.GetValueForOption(explorationModeOption),
+                    pathToModel
                 );
             });
 

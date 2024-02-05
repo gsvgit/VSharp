@@ -1,4 +1,6 @@
 using System.IO;
+using Microsoft.FSharp.Core;
+using VSharp.Explorer;
 
 namespace VSharp;
 
@@ -96,6 +98,7 @@ public readonly record struct VSharpOptions
     private const bool DefaultReleaseBranches = true;
     private const int DefaultRandomSeed = -1;
     private const uint DefaultStepsLimit = 0;
+    private const string DefaultPathToModel = "models/model.onnx";
 
     public readonly int Timeout = DefaultTimeout;
     public readonly int SolverTimeout = DefaultSolverTimeout;
@@ -109,6 +112,8 @@ public readonly record struct VSharpOptions
     public readonly bool ReleaseBranches = DefaultReleaseBranches;
     public readonly int RandomSeed = DefaultRandomSeed;
     public readonly uint StepsLimit = DefaultStepsLimit;
+    public readonly AIAgentTrainingOptions AIAgentTrainingOptions = null;
+    public readonly string PathToModel = DefaultPathToModel;
 
     /// <summary>
     /// Symbolic virtual machine options.
@@ -137,7 +142,9 @@ public readonly record struct VSharpOptions
         ExplorationMode explorationMode = DefaultExplorationMode,
         bool releaseBranches = DefaultReleaseBranches,
         int randomSeed = DefaultRandomSeed,
-        uint stepsLimit = DefaultStepsLimit)
+        uint stepsLimit = DefaultStepsLimit,
+        AIAgentTrainingOptions aiAgentTrainingOptions = null,
+        string pathToModel = DefaultPathToModel)
     {
         Timeout = timeout;
         SolverTimeout = solverTimeout;
