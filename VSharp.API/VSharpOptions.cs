@@ -135,8 +135,8 @@ public readonly record struct VSharpOptions
     /// <param name="stepsLimit">Number of symbolic machine steps to stop execution after. Zero value means no limit.</param>
     /// <param name="aiAgentTrainingOptions">Settings for AI searcher training.</param>
     /// <param name="pathToModel">Path to ONNX file with model to use in AI searcher.</param>
-    /// <param name="useGPU">Enables GPU processing.</param>
-    /// <param name="optimize">Optimize.</param>
+    /// <param name="useGPU">Specifies whether the ONNX execution session should use a CUDA-enabled GPU.</param>
+    /// <param name="optimize">Enabling options like parallel execution and various graph transformations to enhance performance of ONNX.</param>
     public VSharpOptions(
         int timeout = DefaultTimeout,
         int solverTimeout = DefaultSolverTimeout,
