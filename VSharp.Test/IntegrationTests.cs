@@ -132,6 +132,7 @@ namespace VSharp.Test
         private readonly ExplorationMode _explorationMode;
         private readonly int _randomSeed;
         private readonly uint _stepsLimit;
+        public readonly AIOptions? _aiOptions;
         private readonly string _pathToModel;
         private readonly bool _useGPU;
         private readonly bool _optimize;
@@ -200,6 +201,7 @@ namespace VSharp.Test
                 _explorationMode,
                 _randomSeed,
                 _stepsLimit,
+                _aiOptions,
                 _pathToModel,
                 _useGPU,
                 _optimize,
@@ -227,6 +229,7 @@ namespace VSharp.Test
             private readonly ExplorationMode _explorationMode;
             private readonly int _randomSeed;
             private readonly uint _stepsLimit;
+            public readonly AIOptions? _aiOptions;
             private readonly string _pathToModel;
             private readonly bool _useGPU;
             private readonly bool _optimize;
@@ -263,6 +266,7 @@ namespace VSharp.Test
                 ExplorationMode explorationMode,
                 int randomSeed,
                 uint stepsLimit,
+                AIOptions? aiOptions,
                 string pathToModel,
                 bool useGPU,
                 bool optimize,
@@ -319,6 +323,7 @@ namespace VSharp.Test
                 _explorationMode = explorationMode;
                 _randomSeed = randomSeed;
                 _stepsLimit = stepsLimit;
+                _aiOptions = aiOptions;
                 _pathToModel = pathToModel;
                 _useGPU = useGPU;
                 _optimize = optimize;
@@ -478,7 +483,7 @@ namespace VSharp.Test
                         stopOnCoverageAchieved: _expectedCoverage ?? -1,
                         randomSeed: _randomSeed,
                         stepsLimit: _stepsLimit,
-                        aiAgentTrainingOptions: null,
+                        aiOptions: _aiOptions,
                         pathToModel: _pathToModel,
                         useGPU: _useGPU,
                         optimize: _optimize
