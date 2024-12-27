@@ -47,13 +47,8 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
 
     let folderToStoreSerializationResult =
         match options.aiOptions with
-        | Some ((Training trainingOptions)) ->
-            let mapName =
-                match trainingOptions with
-                | SendModel aiAgentTrainingModelOptions ->
-                    aiAgentTrainingModelOptions.aiAgentTrainingOptions.aiBaseOptions.mapName
-                | SendEachStep aiOptions -> aiOptions.aiAgentTrainingOptions.aiBaseOptions.mapName
-
+        | Some (DatasetGenerator aiOptions) ->
+            let mapName = aiOptions.mapName
             getFolderToStoreSerializationResult
                 (Path.GetDirectoryName explorationOptions.outputDirectory.FullName)
                 mapName
