@@ -76,6 +76,8 @@ type SVMOptions =
         stepsLimit: uint
         aiAgentTrainingOptions: Option<AIAgentTrainingOptions>
         pathToModel: Option<string>
+        useGPU: Option<bool>
+        optimize: Option<bool>
     }
 
 type explorationModeOptions =

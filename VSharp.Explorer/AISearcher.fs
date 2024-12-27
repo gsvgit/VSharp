@@ -165,23 +165,36 @@ type internal AISearcher(oracle: Oracle, aiAgentTrainingOptions: Option<AIAgentT
                     incorrectPredictedStateId <- true
                     oracle.Feedback (Feedback.IncorrectPredictedStateId stateId)
                     None
-    new(pathToONNX: string) =
+
+    new(pathToONNX: string, useGPU: bool, optimize: bool) =
         let numOfVertexAttributes = 7
         let numOfStateAttributes = 7
         let numOfHistoryEdgeAttributes = 2
+
         let createOracle (pathToONNX: string) =
-            let sessionOptions = new SessionOptions ()
-            sessionOptions.ExecutionMode <- ExecutionMode.ORT_PARALLEL
-            sessionOptions.GraphOptimizationLevel <- GraphOptimizationLevel.ORT_ENABLE_ALL
+            let sessionOptions =
+                if useGPU then
+                    SessionOptions.MakeSessionOptionWithCudaProvider (0)
+                else
+                    new SessionOptions ()
+
+            if optimize then
+                sessionOptions.ExecutionMode <- ExecutionMode.ORT_PARALLEL
+                sessionOptions.GraphOptimizationLevel <- GraphOptimizationLevel.ORT_ENABLE_ALL
+            else
+                sessionOptions.GraphOptimizationLevel <- GraphOptimizationLevel.ORT_ENABLE_BASIC
+
             let session =
                 new InferenceSession (pathToONNX, sessionOptions)
             let runOptions = new RunOptions ()
             let feedback (x: Feedback) = ()
+
             let predict (gameState: GameState) =
                 let stateIds =
                     Dictionary<uint<stateId>, int> ()
                 let verticesIds =
                     Dictionary<uint<basicBlockGlobalId>, int> ()
+
                 let networkInput =
                     let res = Dictionary<_, _> ()
                     let gameVertices =

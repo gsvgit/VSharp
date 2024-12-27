@@ -41,7 +41,8 @@ type CliArguments =
     | [<Unique ; Mandatory>] Mode of Mode
     | [<Unique>] OutFolder of string
     | [<Unique>] StepsToSerialize of uint
-
+    | [<Unique>] UseGPU
+    | [<Unique>] Optimize
     interface IArgParserTemplate with
         member s.Usage =
             match s with
@@ -53,6 +54,8 @@ type CliArguments =
                 "Mode to run application. Server --- to train network, Generator --- to generate data for training."
             | OutFolder _ -> "Folder to store generated data."
             | StepsToSerialize _ -> "Maximal number of steps for each method to serialize."
+            | UseGPU -> "Enables GPU processing."
+            | Optimize -> "Optimize."
 
 let mutable inTrainMode = true
 
@@ -293,8 +296,11 @@ let main args =
         | Some steps -> steps
         | None -> 500u
 
-    let outputDirectory =
-        Path.Combine (Directory.GetCurrentDirectory (), string port)
+    let useGPU = (args.TryGetResult <@ UseGPU @>).IsSome
+
+    let optimize = (args.TryGetResult <@ Optimize @>).IsSome
+
+    let outputDirectory = Path.Combine(Directory.GetCurrentDirectory(), string port)
 
     if Directory.Exists outputDirectory then
         Directory.Delete (outputDirectory, true)

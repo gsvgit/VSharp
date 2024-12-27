@@ -119,7 +119,20 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
                 | None -> failwith "Empty oracle for AI searcher."
             | None ->
                 match options.pathToModel with
-                | Some s -> AISearcher s
+                | Some s ->
+                    let useGPU =
+                        if options.useGPU.IsSome then
+                            options.useGPU.Value
+                        else
+                            false
+
+                    let optimize =
+                        if options.optimize.IsSome then
+                            options.optimize.Value
+                        else
+                            false
+
+                    AISearcher (s, useGPU, optimize)
                 | None -> failwith "Empty model for AI searcher."
         | BFSMode -> BFSSearcher () :> IForwardSearcher
         | DFSMode -> DFSSearcher () :> IForwardSearcher

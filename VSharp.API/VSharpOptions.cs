@@ -115,6 +115,8 @@ public readonly record struct VSharpOptions
     public readonly uint StepsLimit = DefaultStepsLimit;
     public readonly AIAgentTrainingOptions AIAgentTrainingOptions = null;
     public readonly string PathToModel = DefaultPathToModel;
+    public readonly bool UseGPU = false;
+    public readonly bool Optimize = false;
 
     /// <summary>
     /// Symbolic virtual machine options.
@@ -133,6 +135,8 @@ public readonly record struct VSharpOptions
     /// <param name="stepsLimit">Number of symbolic machine steps to stop execution after. Zero value means no limit.</param>
     /// <param name="aiAgentTrainingOptions">Settings for AI searcher training.</param>
     /// <param name="pathToModel">Path to ONNX file with model to use in AI searcher.</param>
+    /// <param name="useGPU">Enables GPU processing.</param>
+    /// <param name="optimize">Optimize.</param>
     public VSharpOptions(
         int timeout = DefaultTimeout,
         int solverTimeout = DefaultSolverTimeout,
@@ -147,7 +151,9 @@ public readonly record struct VSharpOptions
         int randomSeed = DefaultRandomSeed,
         uint stepsLimit = DefaultStepsLimit,
         AIAgentTrainingOptions aiAgentTrainingOptions = null,
-        string pathToModel = DefaultPathToModel)
+        string pathToModel = DefaultPathToModel,
+        bool useGPU = false,
+        bool optimize = false)
     {
         Timeout = timeout;
         SolverTimeout = solverTimeout;
@@ -163,6 +169,8 @@ public readonly record struct VSharpOptions
         StepsLimit = stepsLimit;
         AIAgentTrainingOptions = aiAgentTrainingOptions;
         PathToModel = pathToModel;
+        UseGPU = useGPU;
+        Optimize = optimize;
     }
 
     /// <summary>

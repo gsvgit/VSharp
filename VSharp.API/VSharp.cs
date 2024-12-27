@@ -111,7 +111,7 @@ namespace VSharp
 
     public static class TestGenerator
     {
-        private class Reporter: IReporter
+        private class Reporter : IReporter
         {
             private readonly UnitTests _unitTests;
             private readonly bool _isQuiet;
@@ -124,7 +124,7 @@ namespace VSharp
 
             public void ReportFinished(UnitTest unitTest) => _unitTests.GenerateTest(unitTest);
             public void ReportException(UnitTest unitTest) => _unitTests.GenerateError(unitTest);
-            public void ReportIIE(InsufficientInformationException iie) {}
+            public void ReportIIE(InsufficientInformationException iie) { }
 
             public void ReportInternalFail(Method? method, Exception exn)
             {
@@ -179,7 +179,7 @@ namespace VSharp
                     explorationMode: explorationMode.NewTestCoverageMode(
                         coverageZone,
                         options.Timeout > 0 ? searchMode.NewFairMode(baseSearchMode) : baseSearchMode
-                        
+
                     ),
                     recThreshold: options.RecursionThreshold,
                     solverTimeout: options.SolverTimeout,
@@ -191,8 +191,11 @@ namespace VSharp
                     stopOnCoverageAchieved: 100,
                     randomSeed: options.RandomSeed,
                     stepsLimit: options.StepsLimit,
-                    aiAgentTrainingOptions: options.AIAgentTrainingOptions == null ? FSharpOption<AIAgentTrainingOptions>.None :FSharpOption<AIAgentTrainingOptions>.Some(options.AIAgentTrainingOptions),
-                    pathToModel: options.PathToModel == null ? FSharpOption<string>.None : FSharpOption<string>.Some(options.PathToModel));
+                    aiAgentTrainingOptions: options.AIAgentTrainingOptions == null ? FSharpOption<AIAgentTrainingOptions>.None : FSharpOption<AIAgentTrainingOptions>.Some(options.AIAgentTrainingOptions),
+                    pathToModel: options.PathToModel == null ? FSharpOption<string>.None : FSharpOption<string>.Some(options.PathToModel),
+                    useGPU: options.UseGPU == null ? FSharpOption<bool>.None : FSharpOption<bool>.Some(options.UseGPU),
+                    optimize: options.Optimize == null ? FSharpOption<bool>.None : FSharpOption<bool>.Some(options.Optimize)
+                    );
 
             var fuzzerOptions =
                 new FuzzerOptions(
@@ -326,7 +329,7 @@ namespace VSharp
         public static Statistics Cover(MethodBase method, VSharpOptions options = new())
         {
             AssemblyManager.LoadCopy(method.Module.Assembly);
-            var methods = new List<MethodBase> {method};
+            var methods = new List<MethodBase> { method };
             var statistics = StartExploration(methods, coverageZone.MethodZone, options);
 
             if (options.RenderTests)

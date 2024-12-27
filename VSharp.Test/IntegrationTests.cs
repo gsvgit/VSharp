@@ -75,7 +75,7 @@ namespace VSharp.Test
     }
 
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Method, AllowMultiple = true)]
-    public class IgnoreFuzzerAttribute: Attribute
+    public class IgnoreFuzzerAttribute : Attribute
     {
         public string Reason { get; init; }
 
@@ -133,6 +133,9 @@ namespace VSharp.Test
         private readonly int _randomSeed;
         private readonly uint _stepsLimit;
         private readonly string _pathToModel;
+        private readonly bool _useGPU;
+        private readonly bool _optimize;
+
 
         public TestSvmAttribute(
             int expectedCoverage = -1,
@@ -150,7 +153,9 @@ namespace VSharp.Test
             ExplorationMode explorationMode = ExplorationMode.Sili,
             int randomSeed = 0,
             uint stepsLimit = 0,
-            string pathToModel = "models/model.onnx")
+            string pathToModel = "models/model.onnx",
+            bool useGPU = false,
+            bool optimize = false)
         {
             if (expectedCoverage < 0)
                 _expectedCoverage = null;
@@ -172,6 +177,8 @@ namespace VSharp.Test
             _explorationMode = explorationMode;
             _randomSeed = randomSeed;
             _pathToModel = pathToModel;
+            _useGPU = useGPU;
+            _optimize = optimize;
             _stepsLimit = stepsLimit;
         }
 
@@ -194,6 +201,8 @@ namespace VSharp.Test
                 _randomSeed,
                 _stepsLimit,
                 _pathToModel,
+                _useGPU,
+                _optimize,
                 _hasExternMocking
             );
         }
@@ -219,8 +228,10 @@ namespace VSharp.Test
             private readonly int _randomSeed;
             private readonly uint _stepsLimit;
             private readonly string _pathToModel;
+            private readonly bool _useGPU;
+            private readonly bool _optimize;
 
-            private class Reporter: IReporter
+            private class Reporter : IReporter
             {
                 private readonly UnitTests _unitTests;
 
@@ -231,7 +242,7 @@ namespace VSharp.Test
 
                 public void ReportFinished(UnitTest unitTest) => _unitTests.GenerateTest(unitTest);
                 public void ReportException(UnitTest unitTest) => _unitTests.GenerateError(unitTest);
-                public void ReportIIE(InsufficientInformationException iie) {}
+                public void ReportIIE(InsufficientInformationException iie) { }
                 public void ReportInternalFail(Method method, Exception exn) => ExceptionDispatchInfo.Capture(exn).Throw();
                 public void ReportCrash(Exception exn) => ExceptionDispatchInfo.Capture(exn).Throw();
             }
@@ -253,6 +264,8 @@ namespace VSharp.Test
                 int randomSeed,
                 uint stepsLimit,
                 string pathToModel,
+                bool useGPU,
+                bool optimize,
                 bool hasExternMocking) : base(innerCommand)
             {
                 _baseCoverageZone = coverageZone;
@@ -307,6 +320,8 @@ namespace VSharp.Test
                 _randomSeed = randomSeed;
                 _stepsLimit = stepsLimit;
                 _pathToModel = pathToModel;
+                _useGPU = useGPU;
+                _optimize = optimize;
             }
 
             private TestResult IgnoreTest(TestExecutionContext context)
@@ -366,7 +381,7 @@ namespace VSharp.Test
                 bool success;
                 var resultMessage = string.Empty;
                 uint? actualCoverage;
-                if (_expectedCoverage is {} expectedCoverage)
+                if (_expectedCoverage is { } expectedCoverage)
                 {
                     TestContext.Out.WriteLine("Starting coverage tool...");
                     success =
@@ -438,7 +453,7 @@ namespace VSharp.Test
                 };
 
                 var originMethodInfo = innerCommand.Test.Method.MethodInfo;
-                var exploredMethodInfo = (MethodInfo) AssemblyManager.NormalizeMethod(originMethodInfo);
+                var exploredMethodInfo = (MethodInfo)AssemblyManager.NormalizeMethod(originMethodInfo);
                 var stats = new TestStatistics(
                     exploredMethodInfo,
                     _releaseBranches,
@@ -463,8 +478,10 @@ namespace VSharp.Test
                         stopOnCoverageAchieved: _expectedCoverage ?? -1,
                         randomSeed: _randomSeed,
                         stepsLimit: _stepsLimit,
-                        aiAgentTrainingOptions:null,
-                        pathToModel: _pathToModel
+                        aiAgentTrainingOptions: null,
+                        pathToModel: _pathToModel,
+                        useGPU: _useGPU,
+                        optimize: _optimize
                     );
 
                     var fuzzerOptions = new FuzzerOptions(
@@ -489,7 +506,7 @@ namespace VSharp.Test
                     using var explorer = new Explorer.Explorer(explorationOptions, new Reporter(unitTests));
                     Application.reset();
                     explorer.StartExploration(
-                        new [] { exploredMethodInfo },
+                        new[] { exploredMethodInfo },
                         global::System.Array.Empty<Tuple<MethodBase, EntryPointConfiguration>>()
                     );
 
