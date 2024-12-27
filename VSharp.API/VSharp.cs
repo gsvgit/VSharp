@@ -191,7 +191,7 @@ namespace VSharp
                     stopOnCoverageAchieved: 100,
                     randomSeed: options.RandomSeed,
                     stepsLimit: options.StepsLimit,
-                    aiAgentTrainingOptions: options.AIAgentTrainingOptions == null ? FSharpOption<AIAgentTrainingOptions>.None : FSharpOption<AIAgentTrainingOptions>.Some(options.AIAgentTrainingOptions),
+                    aiOptions: options.AIOptions == null ? FSharpOption<AIOptions>.None : FSharpOption<AIOptions>.Some(options.AIOptions),
                     pathToModel: options.PathToModel == null ? FSharpOption<string>.None : FSharpOption<string>.Some(options.PathToModel),
                     useGPU: options.UseGPU == null ? FSharpOption<bool>.None : FSharpOption<bool>.Some(options.UseGPU),
                     optimize: options.Optimize == null ? FSharpOption<bool>.None : FSharpOption<bool>.Some(options.Optimize)

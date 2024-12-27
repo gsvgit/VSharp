@@ -132,10 +132,6 @@ namespace VSharp.Test
         private readonly ExplorationMode _explorationMode;
         private readonly int _randomSeed;
         private readonly uint _stepsLimit;
-        private readonly string _pathToModel;
-        private readonly bool _useGPU;
-        private readonly bool _optimize;
-
 
         public TestSvmAttribute(
             int expectedCoverage = -1,
@@ -152,10 +148,7 @@ namespace VSharp.Test
             FuzzerIsolation fuzzerIsolation = FuzzerIsolation.Process,
             ExplorationMode explorationMode = ExplorationMode.Sili,
             int randomSeed = 0,
-            uint stepsLimit = 0,
-            string pathToModel = "models/model.onnx",
-            bool useGPU = false,
-            bool optimize = false)
+            uint stepsLimit = 0)
         {
             if (expectedCoverage < 0)
                 _expectedCoverage = null;
@@ -176,9 +169,6 @@ namespace VSharp.Test
             _fuzzerIsolation = fuzzerIsolation;
             _explorationMode = explorationMode;
             _randomSeed = randomSeed;
-            _pathToModel = pathToModel;
-            _useGPU = useGPU;
-            _optimize = optimize;
             _stepsLimit = stepsLimit;
         }
 
@@ -200,9 +190,6 @@ namespace VSharp.Test
                 _explorationMode,
                 _randomSeed,
                 _stepsLimit,
-                _pathToModel,
-                _useGPU,
-                _optimize,
                 _hasExternMocking
             );
         }
@@ -227,9 +214,6 @@ namespace VSharp.Test
             private readonly ExplorationMode _explorationMode;
             private readonly int _randomSeed;
             private readonly uint _stepsLimit;
-            private readonly string _pathToModel;
-            private readonly bool _useGPU;
-            private readonly bool _optimize;
 
             private class Reporter : IReporter
             {
@@ -263,9 +247,6 @@ namespace VSharp.Test
                 ExplorationMode explorationMode,
                 int randomSeed,
                 uint stepsLimit,
-                string pathToModel,
-                bool useGPU,
-                bool optimize,
                 bool hasExternMocking) : base(innerCommand)
             {
                 _baseCoverageZone = coverageZone;
@@ -319,9 +300,6 @@ namespace VSharp.Test
                 _explorationMode = explorationMode;
                 _randomSeed = randomSeed;
                 _stepsLimit = stepsLimit;
-                _pathToModel = pathToModel;
-                _useGPU = useGPU;
-                _optimize = optimize;
             }
 
             private TestResult IgnoreTest(TestExecutionContext context)
@@ -478,10 +456,10 @@ namespace VSharp.Test
                         stopOnCoverageAchieved: _expectedCoverage ?? -1,
                         randomSeed: _randomSeed,
                         stepsLimit: _stepsLimit,
-                        aiAgentTrainingOptions: null,
-                        pathToModel: _pathToModel,
-                        useGPU: _useGPU,
-                        optimize: _optimize
+                        aiOptions: null,
+                        pathToModel: "models/model.onnx",
+                        useGPU: false,
+                        optimize: false
                     );
 
                     var fuzzerOptions = new FuzzerOptions(
