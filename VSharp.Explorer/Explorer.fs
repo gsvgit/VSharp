@@ -119,16 +119,9 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
         match mode with
         | AIMode ->
             let useGPU =
-                if options.useGPU.IsSome then
-                    options.useGPU.Value
-                else
-                    false
-
+                options.useGPU.IsSome && options.useGPU.Value
             let optimize =
-                if options.optimize.IsSome then
-                    options.optimize.Value
-                else
-                    false
+                options.optimize.IsSome && options.optimize.Value
 
             match options.aiOptions with
             | Some aiOptions ->
