@@ -121,17 +121,9 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
                 match options.pathToModel with
                 | Some s ->
                     let useGPU =
-                        if options.useGPU.IsSome then
-                            options.useGPU.Value
-                        else
-                            false
-
+                        options.useGPU.IsSome && options.useGPU.Value
                     let optimize =
-                        if options.optimize.IsSome then
-                            options.optimize.Value
-                        else
-                            false
-
+                        options.optimize.IsSome && options.optimize.Value
                     AISearcher (s, useGPU, optimize)
                 | None -> failwith "Empty model for AI searcher."
         | BFSMode -> BFSSearcher () :> IForwardSearcher
