@@ -78,6 +78,7 @@ type AIAgentTrainingModelOptions =
     {
         aiAgentTrainingOptions: AIAgentTrainingOptions
         outputDirectory: string
+        port: int
     }
 
 

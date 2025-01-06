@@ -337,7 +337,7 @@ let generateDataForPretraining outputDirectory datasetBasePath (maps: ResizeArra
             API.Reset ()
             HashMap.hashMap.Clear ()
 
-let runTrainingSendModelMode outputDirectory (gameMap: GameMap) (pathToModel: string) (useGPU: bool) (optimize: bool) =
+let runTrainingSendModelMode outputDirectory (gameMap: GameMap) (pathToModel: string) (useGPU: bool) (optimize: bool) (port: int) =
     printfn $"Run infer on {gameMap.MapName} have started."
 
     let aiTrainingOptions =
@@ -363,6 +363,7 @@ let runTrainingSendModelMode outputDirectory (gameMap: GameMap) (pathToModel: st
                 {
                     aiAgentTrainingOptions = aiTrainingOptions
                     outputDirectory = outputDirectory
+                    port = port
                 }
         )
 
@@ -476,7 +477,7 @@ let main args =
         let optimize =
             (args.TryGetResult <@ Optimize @>).IsSome
 
-        runTrainingSendModelMode outputDirectory gameMap model useGPU optimize
+        runTrainingSendModelMode outputDirectory gameMap model useGPU optimize port
     | Mode.Generator ->
         let datasetDescription =
             args.GetResult <@ DatasetDescription @>
