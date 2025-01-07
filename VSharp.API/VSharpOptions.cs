@@ -113,7 +113,7 @@ public readonly record struct VSharpOptions
     public readonly bool ReleaseBranches = DefaultReleaseBranches;
     public readonly int RandomSeed = DefaultRandomSeed;
     public readonly uint StepsLimit = DefaultStepsLimit;
-    public readonly AIAgentTrainingOptions AIAgentTrainingOptions = null;
+    public readonly AIOptions? AIOptions = null;
     public readonly string PathToModel = DefaultPathToModel;
     public readonly bool UseGPU = false;
     public readonly bool Optimize = false;
@@ -133,7 +133,7 @@ public readonly record struct VSharpOptions
     /// <param name="releaseBranches">If true and timeout is specified, a part of allotted time in the end is given to execute remaining states without branching.</param>
     /// <param name="randomSeed">Fixed seed for random operations. Used if greater than or equal to zero.</param>
     /// <param name="stepsLimit">Number of symbolic machine steps to stop execution after. Zero value means no limit.</param>
-    /// <param name="aiAgentTrainingOptions">Settings for AI searcher training.</param>
+    /// <param name="aiOptions">Settings for AI searcher training.</param>
     /// <param name="pathToModel">Path to ONNX file with model to use in AI searcher.</param>
     /// <param name="useGPU">Specifies whether the ONNX execution session should use a CUDA-enabled GPU.</param>
     /// <param name="optimize">Enabling options like parallel execution and various graph transformations to enhance performance of ONNX.</param>
@@ -150,7 +150,7 @@ public readonly record struct VSharpOptions
         bool releaseBranches = DefaultReleaseBranches,
         int randomSeed = DefaultRandomSeed,
         uint stepsLimit = DefaultStepsLimit,
-        AIAgentTrainingOptions aiAgentTrainingOptions = null,
+        AIOptions? aiOptions = null,
         string pathToModel = DefaultPathToModel,
         bool useGPU = false,
         bool optimize = false)
@@ -167,7 +167,7 @@ public readonly record struct VSharpOptions
         ReleaseBranches = releaseBranches;
         RandomSeed = randomSeed;
         StepsLimit = stepsLimit;
-        AIAgentTrainingOptions = aiAgentTrainingOptions;
+        AIOptions = aiOptions;
         PathToModel = pathToModel;
         UseGPU = useGPU;
         Optimize = optimize;
