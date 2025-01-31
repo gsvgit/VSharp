@@ -2,10 +2,7 @@ namespace VSharp.Explorer
 
 open System.Collections.Generic
 open Microsoft.ML.OnnxRuntime
-open System.IO
 open System
-open System.Net
-open System.Net.Sockets
 open System.Text
 open System.Text.Json
 open VSharp
@@ -231,6 +228,7 @@ type internal AISearcher(oracle: Oracle, aiAgentTrainingMode: Option<AIAgentTrai
             let arrayOutputJson =
                 JsonSerializer.Serialize arrayOutput
             arrayOutputJson
+
         let stepToString (gameState: GameState) (output: IDisposableReadOnlyCollection<OrtValue>) =
             let gameStateJson =
                 JsonSerializer.Serialize gameState
@@ -246,22 +244,19 @@ type internal AISearcher(oracle: Oracle, aiAgentTrainingMode: Option<AIAgentTrai
             String.concat " " strToSaveAsList
 
         let createOracleRunner (pathToONNX: string, aiAgentTrainingModelOptions: Option<AIAgentTrainingModelOptions>) =
-            let host = "localhost"
-            let port =
+            let stream =
                 match aiAgentTrainingModelOptions with
-                | Some options -> options.port
-                | None -> 0
-
-            let client = new TcpClient ()
-            client.Connect (host, port)
-            client.SendBufferSize <- 2048
-            let stream = client.GetStream ()
+                | Some options -> options.stream
+                | None -> None
 
             let saveStep (gameState: GameState) (output: IDisposableReadOnlyCollection<OrtValue>) =
-                let bytes =
-                    Encoding.UTF8.GetBytes (stepToString gameState output)
-                stream.Write (bytes, 0, bytes.Length)
-                stream.Flush ()
+                match stream with
+                | Some stream ->
+                    let bytes =
+                        Encoding.UTF8.GetBytes (stepToString gameState output)
+                    stream.Write (bytes, 0, bytes.Length)
+                    stream.Flush ()
+                | None -> ()
 
             let sessionOptions =
                 if useGPU then

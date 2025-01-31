@@ -3,6 +3,7 @@ namespace VSharp.Explorer
 open System.Diagnostics
 open System.IO
 open VSharp.ML.GameServer.Messages
+open System.Net.Sockets
 
 type searchMode =
     | DFSMode
@@ -78,7 +79,7 @@ type AIAgentTrainingModelOptions =
     {
         aiAgentTrainingOptions: AIAgentTrainingOptions
         outputDirectory: string
-        port: int
+        stream: Option<NetworkStream> // use it for sending steps
     }
 
 

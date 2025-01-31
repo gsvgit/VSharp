@@ -1,4 +1,5 @@
 open System.IO
+open System.Net.Sockets
 open System.Reflection
 open Argu
 open Microsoft.FSharp.Core
@@ -35,6 +36,9 @@ type Mode =
     | Server = 0
     | Generator = 1
     | SendModel = 2
+
+let TIMEOUT_FOR_TRAINING = 15 * 60
+let SOLVER_TIMEOUT_FOR_TRAINING = 2
 
 type CliArguments =
     | [<Unique>] Port of int
@@ -241,12 +245,12 @@ let ws port outputDirectory (webSocket: WebSocket) (context: HttpContext) =
 
                     let options =
                         VSharpOptions (
-                            timeout = 15 * 60,
+                            timeout = TIMEOUT_FOR_TRAINING,
                             outputDirectory = outputDirectory,
                             searchStrategy = SearchStrategy.AI,
                             aiOptions = (Some aiOptions |> Option.defaultValue Unchecked.defaultof<_>),
                             stepsLimit = uint (stepsToPlay + stepsToStart),
-                            solverTimeout = 2
+                            solverTimeout = SOLVER_TIMEOUT_FOR_TRAINING
                         )
 
                     let explorationResult =
@@ -280,6 +284,9 @@ let app port outputDirectory : WebPart =
         [
             path "/gameServer" >=> handShake (ws port outputDirectory)
         ]
+
+let serializeExplorationResult (explorationResult: ExplorationResult) =
+    $"{explorationResult.ActualCoverage} {explorationResult.TestsCount} {explorationResult.StepsCount} {explorationResult.ErrorsCount}"
 
 let generateDataForPretraining outputDirectory datasetBasePath (maps: ResizeArray<GameMap>) stepsToSerialize =
     for map in maps do
@@ -325,10 +332,7 @@ let generateDataForPretraining outputDirectory datasetBasePath (maps: ResizeArra
 
             let explorationResult = explore map options
 
-            File.WriteAllText (
-                Path.Join (folderForResults, "result"),
-                $"{explorationResult.ActualCoverage} {explorationResult.TestsCount} {explorationResult.StepsCount} {explorationResult.ErrorsCount}"
-            )
+            File.WriteAllText (Path.Join (folderForResults, "result"), serializeExplorationResult explorationResult)
 
             printfn
                 $"Generation for {map.MapName} finished with coverage {explorationResult.ActualCoverage}, tests {explorationResult.TestsCount}, steps {explorationResult.StepsCount},errors {explorationResult.ErrorsCount}."
@@ -337,7 +341,14 @@ let generateDataForPretraining outputDirectory datasetBasePath (maps: ResizeArra
             API.Reset ()
             HashMap.hashMap.Clear ()
 
-let runTrainingSendModelMode outputDirectory (gameMap: GameMap) (pathToModel: string) (useGPU: bool) (optimize: bool) (port: int) =
+let runTrainingSendModelMode
+    outputDirectory
+    (gameMap: GameMap)
+    (pathToModel: string)
+    (useGPU: bool)
+    (optimize: bool)
+    (port: int)
+    =
     printfn $"Run infer on {gameMap.MapName} have started."
 
     let aiTrainingOptions =
@@ -357,22 +368,29 @@ let runTrainingSendModelMode outputDirectory (gameMap: GameMap) (pathToModel: st
             oracle = None
         }
 
+    let stream =
+        let host = "localhost" // TODO: working within a local network
+        let client = new TcpClient ()
+        client.Connect (host, port)
+        client.SendBufferSize <- 2048
+        Some <| client.GetStream ()
+
     let aiOptions: AIOptions =
         Training (
             SendModel
                 {
                     aiAgentTrainingOptions = aiTrainingOptions
                     outputDirectory = outputDirectory
-                    port = port
+                    stream = stream
                 }
         )
 
     let options =
         VSharpOptions (
-            timeout = 15 * 60,
+            timeout = TIMEOUT_FOR_TRAINING,
             outputDirectory = outputDirectory,
             searchStrategy = SearchStrategy.AI,
-            solverTimeout = 2,
+            solverTimeout = SOLVER_TIMEOUT_FOR_TRAINING,
             aiOptions = (Some aiOptions |> Option.defaultValue Unchecked.defaultof<_>),
             pathToModel = pathToModel,
             useGPU = useGPU,
@@ -384,7 +402,7 @@ let runTrainingSendModelMode outputDirectory (gameMap: GameMap) (pathToModel: st
 
     File.WriteAllText (
         Path.Join (outputDirectory, gameMap.MapName + "result"),
-        $"{explorationResult.ActualCoverage} {explorationResult.TestsCount} {explorationResult.StepsCount} {explorationResult.ErrorsCount}"
+        serializeExplorationResult explorationResult
     )
 
     printfn
