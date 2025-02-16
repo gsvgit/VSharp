@@ -164,7 +164,7 @@ let ws port outputDirectory (webSocket : WebSocket) (context: HttpContext) =
                     Application.reset()
                     API.Reset()
                     HashMap.hashMap.Clear()
-                    do! sendResponse (GameOver (explorationResult.ActualCoverage, explorationResult.TestsCount, explorationResult.ErrorsCount))
+                    do! sendResponse (GameOver (explorationResult.ActualCoverage, explorationResult.TestsCount, explorationResult.ErrorsCount, explorationResult.StepsCount))
                     printfn $"Finish map {gameMap.MapName}, port {port}"
                 | x -> failwithf $"Unexpected message: %A{x}"
                 
