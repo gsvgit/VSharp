@@ -145,10 +145,12 @@ let ws port outputDirectory (webSocket : WebSocket) (context: HttpContext) =
                 | ServerStop -> loop <- false
                 | Start gameMap ->
                     printfn $"Start map {gameMap.MapName}, port {port}"
+                    let stepsToStart= gameMap.StepsToStart
+                    let stepsToPlay = gameMap.StepsToPlay
                     let aiTrainingOptions =
                             {
-                                stepsToSwitchToAI = gameMap.StepsToStart
-                                stepsToPlay = gameMap.StepsToPlay
+                                stepsToSwitchToAI = stepsToStart
+                                stepsToPlay = stepsToPlay
                                 defaultSearchStrategy =
                                     match gameMap.DefaultSearcher with
                                     | searcher.BFS -> BFSMode
@@ -158,7 +160,7 @@ let ws port outputDirectory (webSocket : WebSocket) (context: HttpContext) =
                                 mapName = gameMap.MapName
                                 oracle = Some oracle
                             } 
-                    let options = VSharpOptions(timeout = 15 * 60, outputDirectory = outputDirectory, searchStrategy = SearchStrategy.AI, aiAgentTrainingOptions = aiTrainingOptions, solverTimeout=2)
+                    let options = VSharpOptions(timeout = 15 * 60, outputDirectory = outputDirectory, searchStrategy = SearchStrategy.AI, aiAgentTrainingOptions = aiTrainingOptions, stepsLimit = uint(stepsToPlay + stepsToStart), solverTimeout=2)
                     let explorationResult = explore gameMap options
                     
                     Application.reset()
