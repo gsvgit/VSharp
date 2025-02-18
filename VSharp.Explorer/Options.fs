@@ -24,19 +24,23 @@ type explorationMode =
     | TestCoverageMode of coverageZone * searchMode
     | StackTraceReproductionMode of StackTrace
 
-type fuzzerIsolation =
-    | Process
+type fuzzerIsolation = | Process
 
-type FuzzerOptions = {
-    isolation: fuzzerIsolation
-    coverageZone: coverageZone
-}
+type FuzzerOptions =
+    {
+        isolation: fuzzerIsolation
+        coverageZone: coverageZone
+    }
 
 [<Struct>]
 type Oracle =
     val Predict: GameState -> uint<stateId>
     val Feedback: Feedback -> unit
-    new (predict, feedback) = {Predict=predict; Feedback = feedback}
+    new(predict, feedback) =
+        {
+            Predict = predict
+            Feedback = feedback
+        }
 
 /// <summary>
 /// Options used in AI agent training.
@@ -56,34 +60,36 @@ type AIAgentTrainingOptions =
         mapName: string
         oracle: Option<Oracle>
     }
-    
-type SVMOptions = {
-    explorationMode : explorationMode
-    recThreshold : uint
-    solverTimeout : int
-    visualize : bool
-    releaseBranches : bool
-    maxBufferSize : int
-    prettyChars : bool // If true, 33 <= char <= 126, otherwise any char
-    checkAttributes : bool
-    stopOnCoverageAchieved : int
-    randomSeed : int
-    stepsLimit : uint
-    aiAgentTrainingOptions: Option<AIAgentTrainingOptions>
-    pathToModel: Option<string>
-}
+
+type SVMOptions =
+    {
+        explorationMode: explorationMode
+        recThreshold: uint
+        solverTimeout: int
+        visualize: bool
+        releaseBranches: bool
+        maxBufferSize: int
+        prettyChars: bool // If true, 33 <= char <= 126, otherwise any char
+        checkAttributes: bool
+        stopOnCoverageAchieved: int
+        randomSeed: int
+        stepsLimit: uint
+        aiAgentTrainingOptions: Option<AIAgentTrainingOptions>
+        pathToModel: Option<string>
+    }
 
 type explorationModeOptions =
     | Fuzzing of FuzzerOptions
     | SVM of SVMOptions
     | Combined of SVMOptions * FuzzerOptions
 
-type ExplorationOptions = {
-    timeout : System.TimeSpan
-    outputDirectory : DirectoryInfo
-    explorationModeOptions : explorationModeOptions
-}
-with
+type ExplorationOptions =
+    {
+        timeout: System.TimeSpan
+        outputDirectory: DirectoryInfo
+        explorationModeOptions: explorationModeOptions
+    }
+
     member this.fuzzerOptions =
         match this.explorationModeOptions with
         | Fuzzing x -> x
@@ -100,7 +106,7 @@ with
         match this.explorationModeOptions with
         | SVM x ->
             match x.explorationMode with
-            | TestCoverageMode (coverageZone, _) -> coverageZone 
+            | TestCoverageMode (coverageZone, _) -> coverageZone
             | StackTraceReproductionMode _ -> failwith ""
         | Combined (_, x) -> x.coverageZone
         | Fuzzing x -> x.coverageZone
