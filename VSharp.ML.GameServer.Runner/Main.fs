@@ -350,6 +350,8 @@ let runTrainingSendModelMode
     (port: int)
     =
     printfn $"Run infer on {gameMap.MapName} have started."
+    let stepsToStart = gameMap.StepsToStart
+    let stepsToPlay = gameMap.StepsToPlay
 
     let aiTrainingOptions =
         {
@@ -363,8 +365,8 @@ let runTrainingSendModelMode
 
                     mapName = gameMap.MapName
                 }
-            stepsToSwitchToAI = gameMap.StepsToStart
-            stepsToPlay = gameMap.StepsToPlay
+            stepsToSwitchToAI = stepsToStart
+            stepsToPlay = stepsToPlay
             oracle = None
         }
 
@@ -391,6 +393,7 @@ let runTrainingSendModelMode
             outputDirectory = outputDirectory,
             searchStrategy = SearchStrategy.AI,
             solverTimeout = SOLVER_TIMEOUT_FOR_TRAINING,
+            stepsLimit = uint (stepsToPlay + stepsToStart),
             aiOptions = (Some aiOptions |> Option.defaultValue Unchecked.defaultof<_>),
             pathToModel = pathToModel,
             useGPU = useGPU,
