@@ -4,6 +4,7 @@ open System.Diagnostics
 open System.IO
 open VSharp.ML.GameServer.Messages
 open System.Net.Sockets
+open Microsoft.ML.OnnxRuntime
 
 type searchMode =
     | DFSMode
@@ -54,6 +55,17 @@ type Oracle =
 /// <param name="mapName">Name of map to play.</param>
 /// <param name="mapName">Name of map to play.</param>
 
+[<Struct>]
+type AIGameStep =
+    interface IRawOutgoingMessageBody
+    val GameState: GameState
+    val Output: seq<array<float32>>
+    new(gameState, output) =
+        {
+            GameState = gameState
+            Output = output
+        }
+
 
 type AIBaseOptions =
     {
@@ -79,7 +91,7 @@ type AIAgentTrainingModelOptions =
     {
         aiAgentTrainingOptions: AIAgentTrainingOptions
         outputDirectory: string
-        stream: Option<NetworkStream> // use it for sending steps
+        stepSaver: AIGameStep -> Unit
     }
 
 

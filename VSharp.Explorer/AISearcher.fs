@@ -65,6 +65,11 @@ module GameUtils =
                 )
 
             Some <| GameState (vertices.ToArray (), states, edges.ToArray ())
+
+    let convertOutputToJson (output: IDisposableReadOnlyCollection<OrtValue>) =
+        seq { 0 .. output.Count - 1 }
+        |> Seq.map (fun i -> output[i].GetTensorDataAsSpan<float32>().ToArray ())
+
 type internal AISearcher(oracle: Oracle, aiAgentTrainingMode: Option<AIAgentTrainingMode>) =
     let stepsToSwitchToAI =
         match aiAgentTrainingMode with
@@ -220,44 +225,8 @@ type internal AISearcher(oracle: Oracle, aiAgentTrainingMode: Option<AIAgentTrai
         let numOfStateAttributes = 7
         let numOfHistoryEdgeAttributes = 2
 
-        let serializeOutput (output: IDisposableReadOnlyCollection<OrtValue>) =
-            let arrayOutput =
-                seq { 0 .. output.Count - 1 }
-                |> Seq.map (fun i -> output[i].GetTensorDataAsSpan<float32>().ToArray ())
-
-            let arrayOutputJson =
-                JsonSerializer.Serialize arrayOutput
-            arrayOutputJson
-
-        let stepToString (gameState: GameState) (output: IDisposableReadOnlyCollection<OrtValue>) =
-            let gameStateJson =
-                JsonSerializer.Serialize gameState
-            let outputJson = serializeOutput output
-            let DELIM = Environment.NewLine
-            let strToSaveAsList =
-                [
-                    gameStateJson
-                    DELIM
-                    outputJson
-                    DELIM
-                ]
-            String.concat " " strToSaveAsList
 
         let createOracleRunner (pathToONNX: string, aiAgentTrainingModelOptions: Option<AIAgentTrainingModelOptions>) =
-            let stream =
-                match aiAgentTrainingModelOptions with
-                | Some options -> options.stream
-                | None -> None
-
-            let saveStep (gameState: GameState) (output: IDisposableReadOnlyCollection<OrtValue>) =
-                match stream with
-                | Some stream ->
-                    let bytes =
-                        Encoding.UTF8.GetBytes (stepToString gameState output)
-                    stream.Write (bytes, 0, bytes.Length)
-                    stream.Flush ()
-                | None -> ()
-
             let sessionOptions =
                 if useGPU then
                     SessionOptions.MakeSessionOptionWithCudaProvider (0)
@@ -471,7 +440,10 @@ type internal AISearcher(oracle: Oracle, aiAgentTrainingMode: Option<AIAgentTrai
 
                 let _ =
                     match aiAgentTrainingModelOptions with
-                    | Some _ -> saveStep gameStateOrDelta output
+                    | Some aiAgentOptions ->
+                        aiAgentOptions.stepSaver (
+                            AIGameStep (gameState = gameStateOrDelta, output = GameUtils.convertOutputToJson output)
+                        )
                     | None -> ()
 
                 stepsPlayed <- stepsPlayed + 1

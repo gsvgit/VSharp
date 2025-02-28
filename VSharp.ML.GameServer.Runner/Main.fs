@@ -1,4 +1,6 @@
 open System.IO
+open System.Text
+open System.Text.Json
 open System.Net.Sockets
 open System.Reflection
 open Argu
@@ -370,20 +372,16 @@ let runTrainingSendModelMode
             oracle = None
         }
 
-    let stream =
-        let host = "localhost" // TODO: working within a local network
-        let client = new TcpClient ()
-        client.Connect (host, port)
-        client.SendBufferSize <- 2048
-        Some <| client.GetStream ()
-
+    let mutable steps = []
+    let stepSaver (aiGameStep: AIGameStep) = steps <- aiGameStep :: steps in
+    ()
     let aiOptions: AIOptions =
         Training (
             SendModel
                 {
                     aiAgentTrainingOptions = aiTrainingOptions
                     outputDirectory = outputDirectory
-                    stream = stream
+                    stepSaver = stepSaver
                 }
         )
 
@@ -410,8 +408,26 @@ let runTrainingSendModelMode
 
     printfn
         $"Running for {gameMap.MapName} finished with coverage {explorationResult.ActualCoverage}, tests {explorationResult.TestsCount}, steps {explorationResult.StepsCount},errors {explorationResult.ErrorsCount}."
+    let steps = List.rev steps
+    let stream =
+        let host = "localhost" // TODO: working within a local network
+        let client = new TcpClient ()
+        client.Connect (host, port)
+        client.SendBufferSize <- 4096
+        client.GetStream ()
 
+    let needToSendSteps =
+        let buffer = Array.zeroCreate<byte> 1
+        let bytesRead = stream.Read (buffer, 0, 1)
+        if bytesRead = 0 then
+            failwith "Connection is closed?!"
+        stream.Close ()
+        buffer.[0] <> byte 0
 
+    if needToSendSteps then
+        File.WriteAllText (Path.Join (outputDirectory, gameMap.MapName + "_steps"), JsonSerializer.Serialize steps)
+    else
+        ()
 
 [<EntryPoint>]
 let main args =
