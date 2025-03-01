@@ -12,7 +12,6 @@ open VSharp.Core
 open VSharp.Interpreter.IL
 open CilState
 open VSharp.Explorer
-open VSharp.ML.GameServer.Messages
 open VSharp.Solver
 open VSharp.IL.Serializer
 
@@ -45,13 +44,16 @@ type private IExplorer =
 
 type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVMStatistics, reporter: IReporter) =
     let options = explorationOptions.svmOptions
+
     let folderToStoreSerializationResult =
-        match options.aiAgentTrainingOptions with
-        | None -> ""
-        | Some options ->
+        match options.aiOptions with
+        | Some (DatasetGenerator aiOptions) ->
+            let mapName = aiOptions.mapName
             getFolderToStoreSerializationResult
                 (Path.GetDirectoryName explorationOptions.outputDirectory.FullName)
-                options.mapName
+                mapName
+        | _ -> ""
+
     let hasTimeout =
         explorationOptions.timeout.TotalMilliseconds > 0
 
@@ -69,6 +71,7 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
     let branchReleaseTimeout =
         let doubleTimeout =
             double explorationOptions.timeout.TotalMilliseconds
+
         if not hasTimeout then Double.PositiveInfinity
         elif not options.releaseBranches then doubleTimeout
         else doubleTimeout * 80.0 / 100.0
@@ -93,12 +96,14 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
         if options.visualize then
             DotVisualizer explorationOptions.outputDirectory :> IVisualizer
             |> Application.setVisualizer
+
         SetMaxBuferSize options.maxBufferSize
         TestGenerator.setMaxBufferSize options.maxBufferSize
 
     let isSat pc =
         // TODO: consider trivial cases
         emptyState.pc <- pc
+
         match SolverInteraction.checkSat emptyState with
         | SolverInteraction.SmtSat _
         | SolverInteraction.SmtUnknown _ -> true
@@ -110,21 +115,32 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
                 None
             else
                 Some options.randomSeed
+
         match mode with
         | AIMode ->
-            match options.aiAgentTrainingOptions with
+            let useGPU =
+                options.useGPU.IsSome && options.useGPU.Value
+            let optimize =
+                options.optimize.IsSome && options.optimize.Value
+
+            match options.aiOptions with
             | Some aiOptions ->
-                match aiOptions.oracle with
-                | Some oracle -> AISearcher (oracle, options.aiAgentTrainingOptions) :> IForwardSearcher
-                | None -> failwith "Empty oracle for AI searcher."
+                match aiOptions with
+                | Training aiAgentTrainingOptions ->
+                    match aiAgentTrainingOptions with
+                    | SendEachStep aiAgentTrainingEachStepOptions ->
+                        match aiAgentTrainingEachStepOptions.aiAgentTrainingOptions.oracle with
+                        | Some oracle -> AISearcher (oracle, Some aiAgentTrainingOptions) :> IForwardSearcher
+                        | None -> failwith "Empty oracle for AI searcher training (send each step mode)."
+                    | SendModel aiAgentTrainingModelOptions ->
+                        match options.pathToModel with
+                        | Some path ->
+                            AISearcher (path, useGPU, optimize, Some aiAgentTrainingModelOptions) :> IForwardSearcher
+                        | None -> failwith "Empty model for AI searcher training (send model mode)."
+                | DatasetGenerator aiOptions -> mkForwardSearcher aiOptions.defaultSearchStrategy
             | None ->
                 match options.pathToModel with
-                | Some s ->
-                    let useGPU =
-                        options.useGPU.IsSome && options.useGPU.Value
-                    let optimize =
-                        options.optimize.IsSome && options.optimize.Value
-                    AISearcher (s, useGPU, optimize)
+                | Some s -> AISearcher (s, useGPU, optimize, None)
                 | None -> failwith "Empty model for AI searcher."
         | BFSMode -> BFSSearcher () :> IForwardSearcher
         | DFSMode -> DFSSearcher () :> IForwardSearcher
@@ -157,6 +173,7 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
                     :> IForwardSearcher
                 else
                     mkForwardSearcher searchMode
+
             BidirectionalSearcher (baseSearcher, BackwardSearcher (), DummyTargetedSearcher.DummyTargetedSearcher ())
             :> IBidirectionalSearcher
         | StackTraceReproductionMode _ -> __notImplemented__ ()
@@ -166,8 +183,10 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
             branchesReleased <- true
             statistics.OnBranchesReleased ()
             ReleaseBranches ()
+
             let dfsSearcher =
                 DFSSortedByContributedCoverageSearcher statistics :> IForwardSearcher
+
             let bidirectionalSearcher =
                 OnlyForwardSearcher (dfsSearcher)
             dfsSearcher.Init <| searcher.States ()
@@ -186,13 +205,17 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
             let isNewHistory () =
                 let methodHistory =
                     Set.filter (fun h -> h.method.InCoverageZone) cilState.history
+
                 Set.isEmpty methodHistory
                 || Set.exists (not << statistics.IsBasicBlockCoveredByTest) methodHistory
+
             let isError = suite.IsErrorSuite
+
             let isNewTest =
                 match suite with
                 | Test -> isNewHistory ()
                 | Error (msg, isFatal) -> statistics.IsNewError cilState msg isFatal
+
             if isNewTest then
                 let state = cilState.state
                 let callStackSize =
@@ -200,17 +223,21 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
                 let entryMethod = cilState.EntryMethod
                 let hasException =
                     cilState.IsUnhandledException
+
                 if isError && not hasException then
                     if entryMethod.HasParameterOnStack then
                         Memory.ForcePopFrames (callStackSize - 2) state
                     else
                         Memory.ForcePopFrames (callStackSize - 1) state
+
                 match TestGenerator.state2test suite entryMethod state with
                 | Some test ->
                     statistics.TrackFinished (cilState, isError)
+
                     match suite with
                     | Test -> reporter.ReportFinished test
                     | Error _ -> reporter.ReportException test
+
                     if isCoverageAchieved () then
                         isStopped <- true
                 | None -> ()
@@ -223,6 +250,7 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
         | :? InsufficientInformationException as e ->
             if not state.IsIIEState then
                 state.SetIIE e
+
             reportStateIncomplete state
         | _ ->
             searcher.Remove state
@@ -246,6 +274,7 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
     let wrapOnError isFatal (state: cilState) errorMessage =
         if not <| String.IsNullOrWhiteSpace errorMessage then
             Logger.info $"Error in {state.EntryMethod.FullName}: {errorMessage}"
+
         Application.terminateState state
         let testSuite =
             Error (errorMessage, isFatal)
@@ -259,25 +288,32 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
         hasTimeout
         && statistics.CurrentExplorationTime.TotalMilliseconds
            >= explorationOptions.timeout.TotalMilliseconds
+
     let shouldReleaseBranches () =
         options.releaseBranches
         && statistics.CurrentExplorationTime.TotalMilliseconds >= branchReleaseTimeout
+
     let isStepsLimitReached () =
         hasStepsLimit && statistics.StepsCount >= options.stepsLimit
 
     static member private AllocateByRefParameters initialState (method: Method) =
         let allocateIfByRef (pi: ParameterInfo) =
             let parameterType = pi.ParameterType
+
             if parameterType.IsByRef then
                 if Memory.CallStackSize initialState = 0 then
                     Memory.NewStackFrame initialState None []
+
                 let typ = parameterType.GetElementType ()
                 let position = pi.Position + 1
+
                 let stackRef =
                     Memory.AllocateTemporaryLocalVariableOfType initialState pi.Name position typ
+
                 Some stackRef
             else
                 None
+
         method.Parameters |> Array.map allocateIfByRef |> Array.toList
 
     member private x.FormIsolatedInitialStates (method: Method, initialState: state) =
@@ -286,10 +322,12 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
             let declaringType = method.DeclaringType
             let cilState =
                 cilState.CreateInitial method initialState
+
             let this =
                 if method.HasThis then
                     if Types.IsValueType declaringType then
                         Memory.NewStackFrame initialState None []
+
                         Memory.AllocateTemporaryLocalVariableOfType initialState "this" 0 declaringType
                         |> Some
                     else
@@ -299,15 +337,20 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
                         Some this
                 else
                     None
+
             let parameters =
                 SVMExplorer.AllocateByRefParameters initialState method
             Memory.InitFunctionFrame initialState method this (Some parameters)
+
             match this with
             | Some this -> SolveThisType initialState this
             | _ -> ()
+
             let cilStates =
                 ILInterpreter.CheckDisallowNullAttribute method None cilState false id
+
             assert (List.length cilStates = 1)
+
             if not method.IsStaticConstructor then
                 let cilState = List.head cilStates
                 interpreter.InitializeStatics cilState declaringType List.singleton
@@ -327,11 +370,14 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
             let parameters = method.Parameters
             let hasParameters =
                 Array.length parameters > 0
+
             let state =
                 { initialState with
                     complete = not hasParameters || Option.isSome optionArgs
                 }
+
             state.model <- Memory.EmptyModel method
+
             match optionArgs with
             | Some args ->
                 let stringType = typeof<string>
@@ -354,19 +400,24 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
                     match state.model with
                     | StateModel modelState -> modelState
                     | _ -> __unreachable__ ()
+
                 let argsForModel =
                     Memory.AllocateVectorArray modelState (MakeNumber 0) typeof<String>
+
                 Memory.WriteStackLocation modelState (ParameterKey argsParameter) argsForModel
             | None ->
                 let args = Some List.empty
                 Memory.InitFunctionFrame state method None args
+
             Memory.InitializeStaticMembers state method.DeclaringType
+
             let initialState =
                 match config with
                 | :? WebConfiguration as config ->
                     let webConfig = config.ToWebConfig ()
                     cilState.CreateWebInitial method state webConfig
                 | _ -> cilState.CreateInitial method state
+
             [ initialState ]
         with e ->
             reportInternalFail method e
@@ -379,24 +430,31 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
         // TODO: update pobs when visiting new methods; use coverageZone
         let goodStates, iieStates, errors =
             interpreter.ExecuteOneInstruction s
+
         for s in goodStates @ iieStates @ errors do
             if not s.HasRuntimeExceptionOrError then
                 statistics.TrackStepForward s ip stackSize
+
         let goodStates, toReportFinished =
             goodStates |> List.partition (fun s -> s.IsExecutable || s.IsIsolated)
+
         toReportFinished |> List.iter reportFinished
         let errors, _ =
             errors |> List.partition (fun s -> not s.HasReportedError)
+
         let errors, toReportExceptions =
             errors |> List.partition (fun s -> s.IsIsolated || not s.IsStoppedByException)
+
         let runtimeExceptions, userExceptions =
             toReportExceptions |> List.partition (fun s -> s.HasRuntimeExceptionOrError)
+
         runtimeExceptions |> List.iter (fun state -> reportError state null)
         userExceptions |> List.iter reportFinished
         let iieStates, toReportIIE =
             iieStates |> List.partition (fun s -> s.IsIsolated)
         toReportIIE |> List.iter reportStateIncomplete
         let mutable sIsStopped = false
+
         let newStates =
             match goodStates, iieStates, errors with
             | s' :: goodStates, _, _ when LanguagePrimitives.PhysicalEquality s s' -> goodStates @ iieStates @ errors
@@ -410,25 +468,30 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
         Application.moveState loc s (Seq.cast<_> newStates)
         statistics.TrackFork s newStates
         searcher.UpdateStates s newStates
+
         if sIsStopped then
             searcher.Remove s
 
     member private x.Backward p' (s': cilState) =
         assert (s'.CurrentLoc = p'.loc)
         let sLvl = s'.Level
+
         if p'.lvl >= sLvl then
             let lvl = p'.lvl - sLvl
             let pc = Memory.WLP s'.state p'.pc
+
             match isSat pc with
             | true when not s'.IsIsolated -> searcher.Answer p' (Witnessed s')
             | true ->
                 statistics.TrackStepBackward p' s'
+
                 let p =
                     {
                         loc = s'.StartingLoc
                         lvl = lvl
                         pc = pc
                     }
+
                 Logger.trace $"Backward:\nWas: {p'}\nNow: {p}\n\n"
                 Application.addGoal p.loc
                 searcher.UpdatePobs p' p
@@ -452,17 +515,22 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
               && pick () do
             if shouldReleaseBranches () then
                 releaseBranches ()
+
             match action with
             | GoFront s ->
                 try
-                    if
-                        options.aiAgentTrainingOptions.IsSome
-                        && options.aiAgentTrainingOptions.Value.serializeSteps
-                    then
+                    let needToSerialize =
+                        match options.aiOptions with
+                        | Some (DatasetGenerator _) -> true
+                        | _ -> false
+
+                    if needToSerialize then
                         dumpGameState
                             (Path.Combine (folderToStoreSerializationResult, string firstFreeEpisodeNumber))
                             s.internalId
+
                         firstFreeEpisodeNumber <- firstFreeEpisodeNumber + 1
+
                     x.Forward (s)
                 with e ->
                     reportStateInternalFail s e
@@ -481,10 +549,13 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
         Application.spawnStates (Seq.cast<_> initialStates)
         mainPobs |> Seq.map (fun pob -> pob.loc) |> Seq.toArray |> Application.addGoals
         searcher.Init initialStates mainPobs
+
         initialStates
         |> Seq.filter (fun s -> s.IsIIEState)
         |> Seq.iter reportStateIncomplete
+
         x.BidirectionalSymbolicExecution ()
+
         searcher.Statuses ()
         |> Seq.iter (fun (pob, status) ->
             match status with
@@ -504,6 +575,7 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
             SolverInteraction.setOnSolverStopped statistics.SolverStopped
             AcquireBranches ()
             isCoverageAchieved <- always false
+
             match options.explorationMode with
             | TestCoverageMode _ ->
                 if options.stopOnCoverageAchieved > 0 then
@@ -511,6 +583,7 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
                         let cov =
                             statistics.GetCurrentCoverage entryMethods
                         cov >= options.stopOnCoverageAchieved
+
                     isCoverageAchieved <- checkCoverage
             | StackTraceReproductionMode _ -> __notImplemented__ ()
 
@@ -521,14 +594,18 @@ type private SVMExplorer(explorationOptions: ExplorationOptions, statistics: SVM
                         interpreter.ConfigureErrorReporter reportError reportFatalError
                         let isolatedInitialStates =
                             isolated |> List.collect x.FormIsolatedInitialStates
+
                         let entryPointsInitialStates =
                             entryPoints |> List.collect x.FormEntryPointInitialStates
+
                         let iieStates, initialStates =
                             isolatedInitialStates @ entryPointsInitialStates
                             |> List.partition (fun state -> state.IsIIEState)
+
                         iieStates |> List.iter reportStateIncomplete
                         statistics.SetStatesGetter (fun () -> searcher.States ())
                         statistics.SetStatesCountGetter (fun () -> searcher.StatesCount)
+
                         if not initialStates.IsEmpty then
                             x.AnswerPobs initialStates
                     with e ->
@@ -560,11 +637,13 @@ type private FuzzerExplorer(explorationOptions: ExplorationOptions, statistics: 
             cancellationTokenSource.CancelAfter (explorationOptions.timeout)
             let methodsBase =
                 isolated |> List.map (fun (m, _) -> (m :> IMethod).MethodBase)
+
             task {
                 try
                     let targetAssemblyPath =
                         (Seq.head methodsBase).Module.Assembly.Location
                     let onCancelled () = Logger.warning "Fuzzer canceled"
+
                     let interactor =
                         Fuzzer.Interactor (
                             targetAssemblyPath,
@@ -574,6 +653,7 @@ type private FuzzerExplorer(explorationOptions: ExplorationOptions, statistics: 
                             saveStatistic,
                             onCancelled
                         )
+
                     do! interactor.StartFuzzing ()
                 with e ->
                     Logger.error $"Fuzzer unhandled exception: {e}"
@@ -612,10 +692,12 @@ type public Explorer(options: ExplorationOptions, reporter: IReporter) =
     member private x.TrySubstituteTypeParameters (state: state) (methodBase: MethodBase) =
         let method =
             Application.getMethod methodBase
+
         let getConcreteType =
             function
             | ConcreteType t -> Some t
             | _ -> None
+
         try
             if method.ContainsGenericParameters then
                 match SolveGenericMethodParameters state.typeStorage method with
@@ -625,18 +707,23 @@ type public Explorer(options: ExplorationOptions, reporter: IReporter) =
                     let methodParams =
                         methodParams |> Array.choose getConcreteType
                     let declaringType = methodBase.DeclaringType
+
                     let isSuitableType () =
                         not declaringType.IsGenericType
                         || classParams.Length = declaringType.GetGenericArguments().Length
+
                     let isSuitableMethod () =
                         methodBase.IsConstructor
                         || not methodBase.IsGenericMethod
                         || methodParams.Length = methodBase.GetGenericArguments().Length
+
                     if isSuitableType () && isSuitableMethod () then
                         let reflectedType =
                             Reflection.concretizeTypeParameters methodBase.ReflectedType classParams
+
                         let method =
                             Reflection.concretizeMethodParameters reflectedType methodBase methodParams
+
                         Some method
                     else
                         None
@@ -650,6 +737,7 @@ type public Explorer(options: ExplorationOptions, reporter: IReporter) =
     member x.Reset entryMethods =
         statistics.Reset entryMethods
         Application.setCoverageZone (inCoverageZone options.coverageZone entryMethods)
+
         for explorer in explorers do
             explorer.Reset entryMethods
 
@@ -663,11 +751,13 @@ type public Explorer(options: ExplorationOptions, reporter: IReporter) =
                 let emptyState =
                     Memory.EmptyIsolatedState ()
                 (Option.defaultValue method (x.TrySubstituteTypeParameters emptyState method), emptyState)
+
             let isolated =
                 isolated
                 |> Seq.map trySubstituteTypeParameters
                 |> Seq.map (fun (m, s) -> Application.getMethod m, s)
                 |> Seq.toList
+
             let entryPoints =
                 entryPoints
                 |> Seq.map (fun (m, a) ->

@@ -3,6 +3,8 @@ namespace VSharp.Explorer
 open System.Diagnostics
 open System.IO
 open VSharp.ML.GameServer.Messages
+open System.Net.Sockets
+open Microsoft.ML.OnnxRuntime
 
 type searchMode =
     | DFSMode
@@ -36,6 +38,7 @@ type FuzzerOptions =
 type Oracle =
     val Predict: GameState -> uint<stateId>
     val Feedback: Feedback -> unit
+
     new(predict, feedback) =
         {
             Predict = predict
@@ -51,15 +54,54 @@ type Oracle =
 /// <param name="serializeSteps">Determine whether steps should be serialized.</param>
 /// <param name="mapName">Name of map to play.</param>
 /// <param name="mapName">Name of map to play.</param>
+
+[<Struct>]
+type AIGameStep =
+    interface IRawOutgoingMessageBody
+    val GameState: GameState
+    val Output: seq<array<float32>>
+    new(gameState, output) =
+        {
+            GameState = gameState
+            Output = output
+        }
+
+
+type AIBaseOptions =
+    {
+        defaultSearchStrategy: searchMode
+        mapName: string
+    }
+
 type AIAgentTrainingOptions =
     {
+        aiBaseOptions: AIBaseOptions
         stepsToSwitchToAI: uint<step>
         stepsToPlay: uint<step>
-        defaultSearchStrategy: searchMode
-        serializeSteps: bool
-        mapName: string
-        oracle: Option<Oracle>
+        oracle: option<Oracle>
     }
+
+type AIAgentTrainingEachStepOptions =
+    {
+        aiAgentTrainingOptions: AIAgentTrainingOptions
+    }
+
+
+type AIAgentTrainingModelOptions =
+    {
+        aiAgentTrainingOptions: AIAgentTrainingOptions
+        outputDirectory: string
+        stepSaver: AIGameStep -> Unit
+    }
+
+
+type AIAgentTrainingMode =
+    | SendEachStep of AIAgentTrainingEachStepOptions
+    | SendModel of AIAgentTrainingModelOptions
+
+type AIOptions =
+    | Training of AIAgentTrainingMode
+    | DatasetGenerator of AIBaseOptions
 
 type SVMOptions =
     {
@@ -74,7 +116,7 @@ type SVMOptions =
         stopOnCoverageAchieved: int
         randomSeed: int
         stepsLimit: uint
-        aiAgentTrainingOptions: Option<AIAgentTrainingOptions>
+        aiOptions: Option<AIOptions>
         pathToModel: Option<string>
         useGPU: Option<bool>
         optimize: Option<bool>
